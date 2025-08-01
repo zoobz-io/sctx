@@ -18,10 +18,10 @@ type CryptoAlgorithm string
 const (
 	// CryptoEd25519 is the default high-performance algorithm (30% faster than ECDSA)
 	CryptoEd25519 CryptoAlgorithm = "ed25519"
-	
+
 	// CryptoECDSAP256 is the FIPS 140-2 compliant algorithm for government/compliance requirements
 	CryptoECDSAP256 CryptoAlgorithm = "ecdsa-p256"
-	
+
 	// DefaultCryptoAlgorithm prioritizes performance - governments can opt into compliance
 	DefaultCryptoAlgorithm = CryptoEd25519
 )
@@ -30,16 +30,16 @@ const (
 type CryptoSigner interface {
 	// Sign signs the provided data
 	Sign(data []byte) ([]byte, error)
-	
+
 	// Verify verifies a signature against data and public key
 	Verify(data []byte, signature []byte, publicKey crypto.PublicKey) bool
-	
+
 	// Algorithm returns the algorithm identifier
 	Algorithm() CryptoAlgorithm
-	
+
 	// PublicKey returns the public key
 	PublicKey() crypto.PublicKey
-	
+
 	// KeyType returns a string description for debugging
 	KeyType() string
 }
@@ -49,7 +49,7 @@ func NewCryptoSigner(algorithm CryptoAlgorithm, privateKey crypto.PrivateKey) (C
 	if privateKey == nil {
 		return nil, fmt.Errorf("private key is required")
 	}
-	
+
 	switch algorithm {
 	case CryptoEd25519:
 		ed25519Key, ok := privateKey.(ed25519.PrivateKey)
@@ -57,7 +57,7 @@ func NewCryptoSigner(algorithm CryptoAlgorithm, privateKey crypto.PrivateKey) (C
 			return nil, fmt.Errorf("private key must be ed25519.PrivateKey for Ed25519 algorithm")
 		}
 		return &ed25519Signer{privateKey: ed25519Key}, nil
-		
+
 	case CryptoECDSAP256:
 		ecdsaKey, ok := privateKey.(*ecdsa.PrivateKey)
 		if !ok {
@@ -70,7 +70,7 @@ func NewCryptoSigner(algorithm CryptoAlgorithm, privateKey crypto.PrivateKey) (C
 			return nil, fmt.Errorf("ECDSA private key must use P-256 curve for NIST compliance")
 		}
 		return &ecdsaP256Signer{privateKey: ecdsaKey}, nil
-		
+
 	default:
 		return nil, fmt.Errorf("unsupported algorithm: %s", algorithm)
 	}
@@ -82,14 +82,14 @@ func GenerateKeyPair(algorithm CryptoAlgorithm) (crypto.PrivateKey, crypto.Publi
 	case CryptoEd25519:
 		publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 		return privateKey, publicKey, err
-		
+
 	case CryptoECDSAP256:
 		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			return nil, nil, err
 		}
 		return privateKey, &privateKey.PublicKey, nil
-		
+
 	default:
 		return nil, nil, fmt.Errorf("unsupported algorithm: %s", algorithm)
 	}
@@ -144,14 +144,14 @@ func (s *ecdsaP256Signer) Sign(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ECDSA signing failed: %w", err)
 	}
-	
+
 	// Encode signature using ASN.1 DER format (FIPS standard)
 	signature := ecdsaSignature{R: r, S: sig}
 	signatureBytes, err := asn1.Marshal(signature)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal ECDSA signature: %w", err)
 	}
-	
+
 	return signatureBytes, nil
 }
 
@@ -160,16 +160,16 @@ func (s *ecdsaP256Signer) Verify(data []byte, signature []byte, publicKey crypto
 	if !ok {
 		return false
 	}
-	
+
 	// Decode ASN.1 DER signature
 	var sig ecdsaSignature
 	if _, err := asn1.Unmarshal(signature, &sig); err != nil {
 		return false
 	}
-	
+
 	// Hash the data
 	hash := sha256.Sum256(data)
-	
+
 	// Verify signature
 	return ecdsa.Verify(ecdsaPubKey, hash[:], sig.R, sig.S)
 }
@@ -198,13 +198,25 @@ func DetectAlgorithmFromPublicKey(publicKey crypto.PublicKey) (CryptoAlgorithm, 
 	}
 }
 
+// DetectAlgorithmFromPrivateKey determines the algorithm from a private key
+func DetectAlgorithmFromPrivateKey(privateKey crypto.PrivateKey) (CryptoAlgorithm, error) {
+	switch privateKey.(type) {
+	case ed25519.PrivateKey:
+		return CryptoEd25519, nil
+	case *ecdsa.PrivateKey:
+		return CryptoECDSAP256, nil
+	default:
+		return "", fmt.Errorf("unsupported private key type: %T", privateKey)
+	}
+}
+
 // ValidateAlgorithm checks if the algorithm is supported
 func ValidateAlgorithm(algorithm CryptoAlgorithm) error {
 	switch algorithm {
 	case CryptoEd25519, CryptoECDSAP256:
 		return nil
 	default:
-		return fmt.Errorf("unsupported algorithm: %s. Supported algorithms: %s (default, high-performance), %s (FIPS 140-2 compliant)", 
+		return fmt.Errorf("unsupported algorithm: %s. Supported algorithms: %s (default, high-performance), %s (FIPS 140-2 compliant)",
 			algorithm, CryptoEd25519, CryptoECDSAP256)
 	}
 }

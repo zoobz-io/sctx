@@ -2,11 +2,15 @@ package sctx
 
 import (
 	"crypto"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -16,170 +20,141 @@ var (
 	ErrInvalidContext   = errors.New("invalid context format")
 )
 
-// ContextType represents the type of security context
-type ContextType string
+// SignedToken is an opaque, tamper-proof security token.
+// It contains a signed reference to a cached context.
+// Tokens can only be created by the ContextService and must be verified before use.
+type SignedToken string
 
-// Context is an opaque, tamper-proof security token.
-// It contains encoded and signed identity, permissions, and metadata.
-// Contexts can only be created by the ContextService and must be verified before use.
-type Context string
-
-// ContextData contains the decoded context information after verification
-type ContextData struct {
-	Type                   ContextType
-	ID                     string
+// Context contains the security context information
+type Context[M any] struct {
+	Certificate            *x509.Certificate
 	Permissions            []string
 	IssuedAt               time.Time
 	ExpiresAt              time.Time
-	Issuer                 string
-	CertificateFingerprint string // Cryptographically bound to the context
-	ContextID              string // Unique ID for revocation
-	RefreshCount           int    // Track refresh chain
-	FactoryID              string // Which factory created this
+	Issuer                 string // Which generator created this
+	CertificateFingerprint string // Cache key
+	Metadata               M      // User-defined data
 }
 
 // HasPermission checks if the context data includes a specific permission scope
-func (cd *ContextData) HasPermission(scope string) bool {
-	return slices.Contains(cd.Permissions, scope)
+func (c *Context[M]) HasPermission(scope string) bool {
+	return slices.Contains(c.Permissions, scope)
 }
 
 // IsExpired checks if the context data has expired
-func (cd *ContextData) IsExpired() bool {
-	return time.Now().After(cd.ExpiresAt)
+func (c *Context[M]) IsExpired() bool {
+	return time.Now().After(c.ExpiresAt)
 }
 
-// signedPayload represents the wire format of a context
-type signedPayload struct {
-	Data      string `json:"data"`      // Base64 encoded contextData
-	Signature string `json:"signature"` // Base64 encoded signature
+// tokenPayload represents the wire format of a session token
+type tokenPayload struct {
+	Fingerprint string    `json:"f"` // Certificate fingerprint
+	Expiry      time.Time `json:"e"` // Token expiry
+	Nonce       string    `json:"n"` // Random nonce for uniqueness
 }
 
-
-// encodeAndSign creates a signed context token using the configured crypto algorithm
-func encodeAndSign(data *ContextData, signer CryptoSigner, certificateFingerprint string) (Context, error) {
-	// Include fingerprint in the signed data
-	data.CertificateFingerprint = certificateFingerprint
-
-	// Serialize the data
-	dataBytes, err := json.Marshal(data)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal context data: %w", err)
-	}
-
-	// Sign the data using the configured algorithm
-	signatureBytes, err := signer.Sign(dataBytes)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign context: %w", err)
-	}
-
-	// Create the signed payload
-	payload := signedPayload{
-		Data:      base64.StdEncoding.EncodeToString(dataBytes),
-		Signature: base64.StdEncoding.EncodeToString(signatureBytes),
-	}
-
-	// Encode the final payload
+// encodeAndSign creates a signed session token from a payload
+func encodeAndSign(payload *tokenPayload, signer CryptoSigner) (SignedToken, error) {
+	// Serialize the payload
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal signed payload: %w", err)
+		return "", fmt.Errorf("failed to marshal token payload: %w", err)
 	}
 
-	// Return as base64 encoded context
-	return Context(base64.URLEncoding.EncodeToString(payloadBytes)), nil
+	// Sign the payload
+	signatureBytes, err := signer.Sign(payloadBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign token: %w", err)
+	}
+
+	// Combine payload and signature
+	// Format: base64(payload):base64(signature)
+	token := fmt.Sprintf("%s:%s",
+		base64.URLEncoding.EncodeToString(payloadBytes),
+		base64.URLEncoding.EncodeToString(signatureBytes),
+	)
+
+	return SignedToken(token), nil
 }
 
-// decodeAndVerify extracts and verifies context data using the detected algorithm
-func decodeAndVerify(ctx Context, publicKey crypto.PublicKey) (*ContextData, error) {
-	// Decode the outer payload
-	payloadBytes, err := base64.URLEncoding.DecodeString(string(ctx))
+// verifyTokenPayload verifies a token and returns the payload
+func verifyTokenPayload(token SignedToken, publicKey crypto.PublicKey) (*tokenPayload, error) {
+	// Split token into payload and signature
+	parts := strings.Split(string(token), ":")
+	if len(parts) != 2 {
+		return nil, ErrInvalidContext
+	}
+
+	// Decode payload and signature
+	payloadBytes, err := base64.URLEncoding.DecodeString(parts[0])
 	if err != nil {
 		return nil, ErrInvalidContext
 	}
 
-	// Unmarshal the signed payload
-	var payload signedPayload
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return nil, ErrInvalidContext
-	}
-
-	// Decode the data and signature
-	dataBytes, err := base64.StdEncoding.DecodeString(payload.Data)
+	signatureBytes, err := base64.URLEncoding.DecodeString(parts[1])
 	if err != nil {
 		return nil, ErrInvalidContext
 	}
 
-	signatureBytes, err := base64.StdEncoding.DecodeString(payload.Signature)
-	if err != nil {
-		return nil, ErrInvalidContext
-	}
-
-	// Detect algorithm from public key and create appropriate verifier
+	// Detect algorithm from public key
 	algorithm, err := DetectAlgorithmFromPublicKey(publicKey)
 	if err != nil {
 		return nil, ErrInvalidSignature
 	}
-	
-	// Create verifier (we don't need the private key for verification)
+
+	// Create verifier
 	var signer CryptoSigner
 	switch algorithm {
 	case CryptoEd25519:
-		signer = &ed25519Signer{} // Only used for verification
+		signer = &ed25519Signer{}
 	case CryptoECDSAP256:
-		signer = &ecdsaP256Signer{} // Only used for verification
+		signer = &ecdsaP256Signer{}
 	default:
 		return nil, ErrInvalidSignature
 	}
 
-	// Verify the signature using the detected algorithm
-	if !signer.Verify(dataBytes, signatureBytes, publicKey) {
+	// Verify signature
+	if !signer.Verify(payloadBytes, signatureBytes, publicKey) {
 		return nil, ErrInvalidSignature
 	}
 
-	// Unmarshal the context data
-	var data ContextData
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
+	// Unmarshal payload
+	var payload tokenPayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		return nil, ErrInvalidContext
 	}
 
 	// Check expiration
-	if data.IsExpired() {
+	if time.Now().After(payload.Expiry) {
 		return nil, ErrExpiredContext
 	}
 
-	return &data, nil
+	return &payload, nil
 }
 
-// CheckCompatibility verifies that the subject token has permissions that are
-// a subset of or equal to the caller token permissions. This enables delegation
-// and authorization chain verification in microservices.
-//
-// Returns true if:
-// - Both tokens are valid and not expired
-// - All permissions in subjectToken exist in callerToken
-//
-// Use cases:
-// - Service delegation: "Can this upstream service ask me to perform this operation?"
-// - Proxy/Gateway: "Should I forward this request based on both tokens?"
-// - Workflow orchestration: "Can service A tell service B to do X?"
-func CheckCompatibility(callerToken, subjectToken Context, publicKey crypto.PublicKey) (bool, error) {
-	// Verify caller token
-	callerData, err := VerifyContext(callerToken, publicKey)
-	if err != nil {
-		return false, fmt.Errorf("invalid caller token: %w", err)
+// decodeAndVerify is deprecated - tokens no longer contain context data
+// This is kept for backward compatibility but will panic
+func decodeAndVerify[M any](token SignedToken, publicKey crypto.PublicKey) (*Context[M], error) {
+	panic("decodeAndVerify is deprecated - use verifyTokenPayload and lookup context in cache")
+}
+
+// CheckCompatibility is deprecated - tokens no longer contain permission data
+// Use the cache to lookup and compare contexts instead
+
+// getFingerprint calculates the SHA256 fingerprint of a certificate
+func getFingerprint(cert *x509.Certificate) string {
+	if cert == nil {
+		return ""
 	}
-	
-	// Verify subject token
-	subjectData, err := VerifyContext(subjectToken, publicKey)
-	if err != nil {
-		return false, fmt.Errorf("invalid subject token: %w", err)
+	hash := sha256.Sum256(cert.Raw)
+	return base64.StdEncoding.EncodeToString(hash[:])
+}
+
+// generateContextID creates a unique context identifier
+func generateContextID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // This should never happen
 	}
-	
-	// Check if subject permissions are subset of caller permissions
-	for _, perm := range subjectData.Permissions {
-		if !slices.Contains(callerData.Permissions, perm) {
-			return false, nil
-		}
-	}
-	
-	return true, nil
+	return base64.URLEncoding.EncodeToString(b)
 }

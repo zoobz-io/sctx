@@ -1,0 +1,156 @@
+run:
+  timeout: 5m
+  tests: true
+  
+linters:
+  enable:
+    # Security-critical linters
+    - gosec        # Security analyzer
+    - errorlint    # Proper error handling
+    - noctx        # HTTP requests must have context
+    - bodyclose    # HTTP response body must be closed
+    
+    # Code quality
+    - govet        # Suspicious constructs
+    - ineffassign  # Detect ineffectual assignments
+    - staticcheck  # Advanced static analysis
+    - unused       # Unused code detection
+    - typecheck    # Type checking
+    
+    # Error handling
+    - errcheck     # Unchecked errors
+    - errchkjson   # JSON marshaling errors
+    
+    # Best practices
+    - gocritic     # Opinionated linter
+    - revive       # Fast, configurable linter
+    - unconvert    # Unnecessary type conversions
+    - goconst      # Repeated strings as constants
+    - gofmt        # Formatting
+    - goimports    # Import organization
+    - misspell     # Spelling mistakes
+    - nakedret     # Naked returns
+    - prealloc     # Slice capacity hints
+    - copyloopvar  # Loop variable capture
+
+linters-settings:
+  gosec:
+    severity: medium
+    confidence: medium
+    excludes:
+      - G104  # We'll use errcheck instead
+    config:
+      global:
+        audit: true
+  
+  govet:
+    enable-all: true
+  
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  
+  gocritic:
+    enabled-checks:
+      - commentedOutCode
+      - deferInLoop
+      - emptyFallthrough
+      - emptyStringTest
+      - equalFold
+      - evalOrder
+      - exposedSyncMutex
+      - externalErrorReassign
+      - filepathJoin
+      - hexLiteral
+      - httpNoBody
+      - importShadow
+      - initClause
+      - nestingReduce
+      - nilValReturn
+      - octalLiteral
+      - preferFilepathJoin
+      - rangeExprCopy
+      - rangeValCopy
+      - redundantSprint
+      - regexpPattern
+      - regexpSimplify
+      - sloppyReassign
+      - sortSlice
+      - sprintfQuotedString
+      - stringConcatSimplify
+      - stringXbytes
+      - truncateCmp
+      - typeAssertChain
+      - typeUnparen
+      - unlabelStmt
+      - unnamedResult
+      - unnecessaryBlock
+      - unnecessaryDefer
+      - weakCond
+  
+  revive:
+    severity: warning
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: empty-block
+      - name: error-naming
+      - name: error-return
+      - name: error-strings
+      - name: errorf
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: indent-error-flow
+      - name: modifies-parameter
+      - name: modifies-value-receiver
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: redefines-builtin-id
+      - name: string-of-int
+      - name: superfluous-else
+      - name: time-naming
+      - name: unexported-return
+      - name: unnecessary-stmt
+      - name: unreachable-code
+      - name: unused-parameter
+      - name: unused-receiver
+      - name: useless-break
+      - name: var-declaration
+      - name: var-naming
+  
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+    
+  misspell:
+    locale: US
+
+issues:
+  exclude-dirs-use-default: false
+  exclude-rules:
+    # Test files can have different patterns
+    - path: _test\.go
+      linters:
+        - goconst
+        - govet
+        - errcheck
+    
+    # Demo code can be less strict
+    - path: demo/
+      linters:
+        - gosec
+        - errcheck
+    
+    # Benchmarks have specific patterns
+    - path: benchmarks/
+      linters:
+        - gosec
+        - errcheck
+  
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false

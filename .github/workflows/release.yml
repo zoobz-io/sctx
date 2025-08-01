@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for svu
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+    
+    - name: Install svu
+      run: go install github.com/caarlos0/svu@latest
+    
+    - name: Run tests
+      run: go test -v ./...
+    
+    - name: Calculate next version
+      id: version
+      run: |
+        NEXT_VERSION=$(svu next)
+        echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+        echo "Next version will be: $NEXT_VERSION"
+    
+    - name: Check if tag exists
+      id: check_tag
+      run: |
+        if git rev-parse "${{ steps.version.outputs.next_version }}" >/dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Create tag
+      if: steps.check_tag.outputs.exists == 'false'
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git tag -a "${{ steps.version.outputs.next_version }}" -m "Release ${{ steps.version.outputs.next_version }}"
+        git push origin "${{ steps.version.outputs.next_version }}"
+    
+    - name: Update CHANGELOG.md
+      if: steps.check_tag.outputs.exists == 'false'
+      run: |
+        # Get the last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        
+        # Collect commits since last tag and format them
+        echo "## [${{ steps.version.outputs.next_version }}] - $(date +%Y-%m-%d)" > new_release.md
+        echo "" >> new_release.md
+        
+        # Group commits by type
+        FEAT_COMMITS=$(git log --pretty=format:"%s" ${LAST_TAG:+$LAST_TAG..}HEAD | grep -E "^(feat|add):" | sed 's/^feat: /- /' | sed 's/^add: /- /' || true)
+        FIX_COMMITS=$(git log --pretty=format:"%s" ${LAST_TAG:+$LAST_TAG..}HEAD | grep -E "^(fix|bugfix):" | sed 's/^fix: /- /' | sed 's/^bugfix: /- /' || true)
+        CHANGE_COMMITS=$(git log --pretty=format:"%s" ${LAST_TAG:+$LAST_TAG..}HEAD | grep -E "^(change|update|refactor):" | sed 's/^change: /- /' | sed 's/^update: /- /' | sed 's/^refactor: /- /' || true)
+        
+        if [ ! -z "$FEAT_COMMITS" ]; then
+          echo "### Added" >> new_release.md
+          echo "$FEAT_COMMITS" >> new_release.md
+          echo "" >> new_release.md
+        fi
+        
+        if [ ! -z "$CHANGE_COMMITS" ]; then
+          echo "### Changed" >> new_release.md
+          echo "$CHANGE_COMMITS" >> new_release.md
+          echo "" >> new_release.md
+        fi
+        
+        if [ ! -z "$FIX_COMMITS" ]; then
+          echo "### Fixed" >> new_release.md
+          echo "$FIX_COMMITS" >> new_release.md
+          echo "" >> new_release.md
+        fi
+        
+        # Update CHANGELOG - insert new release after # Changelog
+        awk '/^# Changelog/{print; print ""; system("cat new_release.md"); next} 1' CHANGELOG.md > temp_changelog.md
+        mv temp_changelog.md CHANGELOG.md
+        
+        # Commit the updated changelog
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git add CHANGELOG.md
+        git commit -m "chore: release ${{ steps.version.outputs.next_version }}" || echo "No changes to commit"
+        git push origin main
+    
+    - name: Extract release notes
+      id: release_notes
+      run: |
+        # Extract the release notes for this version
+        awk '/^## \[${{ steps.version.outputs.next_version }}\]/{flag=1; next} /^## \[/{flag=0} flag' CHANGELOG.md > release_notes.md
+    
+    - name: Create Release
+      if: steps.check_tag.outputs.exists == 'false'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.version.outputs.next_version }}
+        release_name: Release ${{ steps.version.outputs.next_version }}
+        draft: false
+        prerelease: false
+        body_path: release_notes.md
