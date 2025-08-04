@@ -30,12 +30,31 @@ type SignedToken string
 // CertificateInfo contains extracted certificate information
 // This replaces storing the full x509.Certificate for better serialization
 type CertificateInfo struct {
-	CommonName   string    // Subject common name for audit logs
-	SerialNumber string    // Certificate serial number for identification
-	NotBefore    time.Time // Certificate validity start
-	NotAfter     time.Time // Certificate validity end
-	Issuer       string    // Certificate issuer for audit/compliance
-	KeyUsage     []string  // Key usage extensions for validation
+	// Subject fields
+	CommonName         string   `json:"cn,omitempty"`
+	Organization       []string `json:"o,omitempty"`
+	OrganizationalUnit []string `json:"ou,omitempty"`
+	Country            string   `json:"c,omitempty"`
+	Province           string   `json:"st,omitempty"`
+	Locality           string   `json:"l,omitempty"`
+	StreetAddress      []string `json:"street,omitempty"`
+	PostalCode         []string `json:"postal,omitempty"`
+
+	// Certificate metadata
+	SerialNumber string    `json:"serial"`
+	NotBefore    time.Time `json:"notBefore"`
+	NotAfter     time.Time `json:"notAfter"`
+
+	// Issuer fields
+	Issuer             string   `json:"issuer,omitempty"`
+	IssuerOrganization []string `json:"issuerOrg,omitempty"`
+
+	// Extensions
+	KeyUsage       []string `json:"keyUsage,omitempty"`
+	DNSNames       []string `json:"dnsNames,omitempty"`
+	EmailAddresses []string `json:"emails,omitempty"`
+	URIs           []string `json:"uris,omitempty"`
+	IPAddresses    []string `json:"ips,omitempty"`
 }
 
 // Context contains the security context information
@@ -74,16 +93,55 @@ func (c *Context[M]) Clone() *Context[M] {
 	// Deep copy CertificateInfo
 	clone.CertificateInfo = CertificateInfo{
 		CommonName:   c.CertificateInfo.CommonName,
+		Country:      c.CertificateInfo.Country,
+		Province:     c.CertificateInfo.Province,
+		Locality:     c.CertificateInfo.Locality,
 		SerialNumber: c.CertificateInfo.SerialNumber,
 		NotBefore:    c.CertificateInfo.NotBefore,
 		NotAfter:     c.CertificateInfo.NotAfter,
 		Issuer:       c.CertificateInfo.Issuer,
 	}
 
-	// Deep copy KeyUsage slice
+	// Deep copy slice fields
+	if c.CertificateInfo.Organization != nil {
+		clone.CertificateInfo.Organization = make([]string, len(c.CertificateInfo.Organization))
+		copy(clone.CertificateInfo.Organization, c.CertificateInfo.Organization)
+	}
+	if c.CertificateInfo.OrganizationalUnit != nil {
+		clone.CertificateInfo.OrganizationalUnit = make([]string, len(c.CertificateInfo.OrganizationalUnit))
+		copy(clone.CertificateInfo.OrganizationalUnit, c.CertificateInfo.OrganizationalUnit)
+	}
+	if c.CertificateInfo.StreetAddress != nil {
+		clone.CertificateInfo.StreetAddress = make([]string, len(c.CertificateInfo.StreetAddress))
+		copy(clone.CertificateInfo.StreetAddress, c.CertificateInfo.StreetAddress)
+	}
+	if c.CertificateInfo.PostalCode != nil {
+		clone.CertificateInfo.PostalCode = make([]string, len(c.CertificateInfo.PostalCode))
+		copy(clone.CertificateInfo.PostalCode, c.CertificateInfo.PostalCode)
+	}
+	if c.CertificateInfo.IssuerOrganization != nil {
+		clone.CertificateInfo.IssuerOrganization = make([]string, len(c.CertificateInfo.IssuerOrganization))
+		copy(clone.CertificateInfo.IssuerOrganization, c.CertificateInfo.IssuerOrganization)
+	}
 	if c.CertificateInfo.KeyUsage != nil {
 		clone.CertificateInfo.KeyUsage = make([]string, len(c.CertificateInfo.KeyUsage))
 		copy(clone.CertificateInfo.KeyUsage, c.CertificateInfo.KeyUsage)
+	}
+	if c.CertificateInfo.DNSNames != nil {
+		clone.CertificateInfo.DNSNames = make([]string, len(c.CertificateInfo.DNSNames))
+		copy(clone.CertificateInfo.DNSNames, c.CertificateInfo.DNSNames)
+	}
+	if c.CertificateInfo.EmailAddresses != nil {
+		clone.CertificateInfo.EmailAddresses = make([]string, len(c.CertificateInfo.EmailAddresses))
+		copy(clone.CertificateInfo.EmailAddresses, c.CertificateInfo.EmailAddresses)
+	}
+	if c.CertificateInfo.URIs != nil {
+		clone.CertificateInfo.URIs = make([]string, len(c.CertificateInfo.URIs))
+		copy(clone.CertificateInfo.URIs, c.CertificateInfo.URIs)
+	}
+	if c.CertificateInfo.IPAddresses != nil {
+		clone.CertificateInfo.IPAddresses = make([]string, len(c.CertificateInfo.IPAddresses))
+		copy(clone.CertificateInfo.IPAddresses, c.CertificateInfo.IPAddresses)
 	}
 
 	// Deep copy permissions slice
@@ -244,13 +302,62 @@ func extractCertificateInfo(cert *x509.Certificate) CertificateInfo {
 		}
 	}
 
+	// Extract country (first value if multiple)
+	country := ""
+	if len(cert.Subject.Country) > 0 {
+		country = cert.Subject.Country[0]
+	}
+
+	// Extract province/state (first value if multiple)
+	province := ""
+	if len(cert.Subject.Province) > 0 {
+		province = cert.Subject.Province[0]
+	}
+
+	// Extract locality (first value if multiple)
+	locality := ""
+	if len(cert.Subject.Locality) > 0 {
+		locality = cert.Subject.Locality[0]
+	}
+
+	// Convert IP addresses to strings
+	var ipAddresses []string
+	for _, ip := range cert.IPAddresses {
+		ipAddresses = append(ipAddresses, ip.String())
+	}
+
+	// Convert URIs to strings
+	var uris []string
+	for _, uri := range cert.URIs {
+		uris = append(uris, uri.String())
+	}
+
 	return CertificateInfo{
-		CommonName:   cert.Subject.CommonName,
+		// Subject fields
+		CommonName:         cert.Subject.CommonName,
+		Organization:       cert.Subject.Organization,
+		OrganizationalUnit: cert.Subject.OrganizationalUnit,
+		Country:            country,
+		Province:           province,
+		Locality:           locality,
+		StreetAddress:      cert.Subject.StreetAddress,
+		PostalCode:         cert.Subject.PostalCode,
+
+		// Certificate metadata
 		SerialNumber: cert.SerialNumber.String(),
 		NotBefore:    cert.NotBefore,
 		NotAfter:     cert.NotAfter,
-		Issuer:       cert.Issuer.CommonName,
-		KeyUsage:     keyUsage,
+
+		// Issuer fields
+		Issuer:             cert.Issuer.CommonName,
+		IssuerOrganization: cert.Issuer.Organization,
+
+		// Extensions
+		KeyUsage:       keyUsage,
+		DNSNames:       cert.DNSNames,
+		EmailAddresses: cert.EmailAddresses,
+		URIs:           uris,
+		IPAddresses:    ipAddresses,
 	}
 }
 

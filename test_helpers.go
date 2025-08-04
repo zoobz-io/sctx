@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net"
 	"testing"
 	"time"
 )
@@ -68,13 +69,21 @@ func GenerateTestCertificates(t *testing.T) *TestCertificates {
 		SerialNumber: big.NewInt(2),
 		Subject: pkix.Name{
 			Organization:       []string{"Test Client"},
-			OrganizationalUnit: []string{"Engineering"},
+			OrganizationalUnit: []string{"Engineering", "Security"},
 			CommonName:         "test-client",
+			Country:            []string{"US"},
+			Province:           []string{"CA"},
+			Locality:           []string{"San Francisco"},
+			StreetAddress:      []string{"123 Test St"},
+			PostalCode:         []string{"94102"},
 		},
-		NotBefore:   time.Now().Add(-24 * time.Hour),
-		NotAfter:    time.Now().Add(90 * 24 * time.Hour),
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageAny},
+		NotBefore:      time.Now().Add(-24 * time.Hour),
+		NotAfter:       time.Now().Add(90 * 24 * time.Hour),
+		KeyUsage:       x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageAny},
+		DNSNames:       []string{"test.example.com", "*.test.example.com"},
+		EmailAddresses: []string{"test@example.com", "admin@example.com"},
+		IPAddresses:    []net.IP{net.IPv4(192, 168, 1, 1), net.IPv4(10, 0, 0, 1)},
 	}
 
 	clientCertDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, rootCert, clientPub, rootKey)

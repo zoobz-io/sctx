@@ -76,8 +76,24 @@ func extractCertInfoField(certInfo CertificateInfo, field string) string {
 	switch strings.ToUpper(field) {
 	case "CN", "COMMONNAME":
 		return certInfo.CommonName
+	case "O", "ORGANIZATION":
+		return strings.Join(certInfo.Organization, ",")
+	case "OU", "ORGANIZATIONALUNIT":
+		return strings.Join(certInfo.OrganizationalUnit, ",")
+	case "C", "COUNTRY":
+		return certInfo.Country
+	case "ST", "STATE", "PROVINCE":
+		return certInfo.Province
+	case "L", "LOCALITY":
+		return certInfo.Locality
+	case "STREET", "STREETADDRESS":
+		return strings.Join(certInfo.StreetAddress, ",")
+	case "POSTALCODE":
+		return strings.Join(certInfo.PostalCode, ",")
 	case "ISSUER":
 		return certInfo.Issuer
+	case "ISSUERORG", "ISSUERORGANIZATION":
+		return strings.Join(certInfo.IssuerOrganization, ",")
 	case "SERIAL", "SERIALNUMBER":
 		return certInfo.SerialNumber
 	case "NOTBEFORE":
@@ -86,6 +102,14 @@ func extractCertInfoField(certInfo CertificateInfo, field string) string {
 		return certInfo.NotAfter.Format(time.RFC3339)
 	case "KEYUSAGE":
 		return strings.Join(certInfo.KeyUsage, ",")
+	case "DNSNAMES", "DNS":
+		return strings.Join(certInfo.DNSNames, ",")
+	case "EMAILS", "EMAILADDRESSES":
+		return strings.Join(certInfo.EmailAddresses, ",")
+	case "URIS":
+		return strings.Join(certInfo.URIs, ",")
+	case "IPS", "IPADDRESSES":
+		return strings.Join(certInfo.IPAddresses, ",")
 	default:
 		return ""
 	}
