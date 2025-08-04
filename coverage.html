@@ -1,0 +1,1940 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>sctx: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/zoobzio/sctx/admin.go (98.4%)</option>
+				
+				<option value="file1">github.com/zoobzio/sctx/assertion.go (94.7%)</option>
+				
+				<option value="file2">github.com/zoobzio/sctx/cache.go (100.0%)</option>
+				
+				<option value="file3">github.com/zoobzio/sctx/context.go (86.8%)</option>
+				
+				<option value="file4">github.com/zoobzio/sctx/crypto.go (94.1%)</option>
+				
+				<option value="file5">github.com/zoobzio/sctx/events.go (100.0%)</option>
+				
+				<option value="file6">github.com/zoobzio/sctx/guards.go (97.7%)</option>
+				
+				<option value="file7">github.com/zoobzio/sctx/processors.go (100.0%)</option>
+				
+				<option value="file8">github.com/zoobzio/sctx/test_helpers.go (48.8%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package sctx
+
+import (
+        "context"
+        "crypto"
+        "crypto/x509"
+        "errors"
+        "fmt"
+        "sync"
+        "time"
+
+        "github.com/zoobzio/flume"
+        "github.com/zoobzio/pipz"
+        "github.com/zoobzio/zlog"
+)
+
+// Config types removed - now using flume schemas for configuration
+
+var (
+        ErrInvalidKey = errors.New("invalid private key")
+)
+
+// adminService is the security authority that creates and validates tokens
+type adminService[M any] struct {
+        privateKey crypto.PrivateKey
+        publicKey  crypto.PublicKey
+        certPool   *x509.CertPool
+        cache      ContextCache[M]
+        signer     CryptoSigner
+
+        // Pipeline architecture
+        contextFactory    *flume.Factory[*Context[M]]       // For certificate → context processing
+        contextPipeline   pipz.Chainable[*Context[M]]       // Active context processing pipeline
+        assertionPipeline pipz.Chainable[*AssertionContext] // Fixed assertion validation pipeline
+
+        // Guard configuration
+        guardCreationPermissions []string // Required permissions to create guards
+
+        // Nonce tracking for replay protection
+        nonceMu    sync.RWMutex
+        nonceCache map[string]time.Time
+
+        // Typed loggers
+        contextLogger     *zlog.Logger[ContextEvent[M]]
+        certificateLogger *zlog.Logger[CertificateEvent]
+}
+
+// NewAdminService creates a new admin service instance
+func NewAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin, error) <span class="cov8" title="1">{
+        if privateKey == nil </span><span class="cov8" title="1">{
+                return nil, ErrInvalidKey
+        }</span>
+        <span class="cov8" title="1">if trustedCAs == nil </span><span class="cov8" title="1">{
+                return nil, errors.New("trusted CAs required")
+        }</span>
+
+        // Detect algorithm from key
+        <span class="cov8" title="1">algorithm, err := DetectAlgorithmFromPrivateKey(privateKey)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, err
+        }</span>
+
+        // Create signer
+        <span class="cov8" title="1">signer, err := NewCryptoSigner(algorithm, privateKey)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Create cache with 5 minute cleanup
+        <span class="cov8" title="1">cache := newMemoryContextCache[M](5 * time.Minute)
+
+        // Create context processing factory and register processors
+        contextFactory := flume.New[*Context[M]]()
+        processors := CreateProcessors[M]()
+        contextFactory.Add(
+                // Context manipulation processors
+                processors.SetExpiryOneHour,
+                processors.SetExpiryFiveMinutes,
+                // Permission processors
+                processors.GrantRead,
+                processors.GrantWrite,
+                processors.GrantAdmin,
+                processors.GrantCreateGuard,
+        )
+
+        // Create typed loggers
+        contextLogger := zlog.NewLogger[ContextEvent[M]]()
+        certificateLogger := zlog.NewLogger[CertificateEvent]()
+
+        // Add sanitizers before forwarding to global logger
+        contextLogger.HookAll(getContextSanitizer[M]())
+        certificateLogger.HookAll(certificateSanitizer)
+
+        // Enable global forwarding
+        contextLogger.Watch()
+        certificateLogger.Watch()
+
+        result := &amp;adminService[M]{
+                privateKey:        privateKey,
+                publicKey:         signer.PublicKey(),
+                certPool:          trustedCAs,
+                cache:             cache,
+                signer:            signer,
+                contextFactory:    contextFactory,
+                nonceCache:        make(map[string]time.Time),
+                contextLogger:     contextLogger,
+                certificateLogger: certificateLogger,
+        }
+
+        // Create fixed assertion validation pipeline
+        assertionProcessors := CreateAssertionProcessors[M]()
+        assertionPipeline := pipz.NewSequence[*AssertionContext]("assertion-validation",
+                assertionProcessors[ProcessorVerifySignature],
+                assertionProcessors[ProcessorCheckExpiration],
+                checkNonceProcessor(result),
+                assertionProcessors[ProcessorMatchFingerprint],
+                assertionProcessors[ProcessorValidateClaims],
+        )
+        result.assertionPipeline = assertionPipeline
+
+
+        // Start cache cleanup
+        shutdown := make(chan struct{})
+        var wg sync.WaitGroup
+        cache.Start(shutdown, &amp;wg)
+
+        return result, nil</span>
+}
+
+// PublicKey returns the public key for token verification
+func (a *adminService[M]) PublicKey() crypto.PublicKey <span class="cov8" title="1">{
+        return a.publicKey
+}</span>
+
+// Algorithm returns the crypto algorithm in use
+func (a *adminService[M]) Algorithm() CryptoAlgorithm <span class="cov8" title="1">{
+        return a.signer.Algorithm()
+}</span>
+
+// Cache operations for admin control
+
+// RevokeByFingerprint removes a context from the cache
+func (a *adminService[M]) RevokeByFingerprint(fingerprint string) error <span class="cov8" title="1">{
+        // Get context info before deletion for audit
+        ctx, exists := a.cache.Get(fingerprint)
+        if exists &amp;&amp; ctx != nil </span><span class="cov8" title="1">{
+                cn := ctx.CertificateInfo.CommonName
+                a.contextLogger.Emit(CONTEXT_REVOKED,
+                        fmt.Sprintf("Context manually revoked for %s", cn),
+                        ContextEvent[M]{
+                                Context:   ctx,
+                                Token:     "", // Token not available in revoke
+                                Operation: "revoked",
+                        },
+                )
+        }</span>
+        <span class="cov8" title="1">return a.cache.Delete(fingerprint)</span>
+}
+
+// GetContext retrieves a context by fingerprint
+func (a *adminService[M]) GetContext(fingerprint string) (*Context[M], bool) <span class="cov8" title="1">{
+        return a.cache.Get(fingerprint)
+}</span>
+
+// ActiveCount returns the number of active contexts
+func (a *adminService[M]) ActiveCount() int <span class="cov8" title="1">{
+        if counter, ok := a.cache.(interface{ Count() int }); ok </span><span class="cov8" title="1">{
+                return counter.Count()
+        }</span>
+        <span class="cov8" title="1">return -1</span> // Unknown
+}
+
+// RegisterProcessor registers a custom processor with the context factory
+func (a *adminService[M]) RegisterProcessor(name string, guard ContextGuard[M]) <span class="cov8" title="1">{
+        a.contextFactory.Add(pipz.Apply(pipz.Name(name), guard))
+}</span>
+
+// SetCache replaces the context cache implementation
+// This allows users to bring their own cache (Redis, Hazelcast, etc)
+func (a *adminService[M]) SetCache(cache ContextCache[M]) error <span class="cov8" title="1">{
+        if cache == nil </span><span class="cov8" title="1">{
+                return errors.New("cache cannot be nil")
+        }</span>
+        <span class="cov8" title="1">a.cache = cache
+        return nil</span>
+}
+
+// LoadContextSchema configures the context processing pipeline from a YAML schema
+func (a *adminService[M]) LoadContextSchema(yamlStr string) error <span class="cov8" title="1">{
+        pipeline, err := a.contextFactory.BuildFromYAML(yamlStr)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("failed to build context pipeline from schema: %w", err)
+        }</span>
+        <span class="cov8" title="1">a.contextPipeline = pipeline
+        return nil</span>
+}
+
+// LoadContextSchemaFromFile loads a context schema from a file
+func (a *adminService[M]) LoadContextSchemaFromFile(path string) error <span class="cov8" title="1">{
+        pipeline, err := a.contextFactory.BuildFromFile(path)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("failed to build context pipeline from file %s: %w", path, err)
+        }</span>
+        <span class="cov8" title="1">a.contextPipeline = pipeline
+        return nil</span>
+}
+
+
+
+// Generate creates a token for the given certificate and assertion
+func (a *adminService[M]) Generate(cert *x509.Certificate, assertion SignedAssertion) (SignedToken, error) <span class="cov8" title="1">{
+        if cert == nil </span><span class="cov8" title="1">{
+                return "", errors.New("certificate is required")
+        }</span>
+
+        // Validate assertion through fixed pipeline
+
+        <span class="cov8" title="1">assertionCtx := &amp;AssertionContext{
+                Assertion:   assertion,
+                Certificate: cert,
+        }
+
+        _, err := a.assertionPipeline.Process(context.Background(), assertionCtx)
+        if err != nil </span><span class="cov8" title="1">{
+                a.certificateLogger.Emit(CERTIFICATE_REJECTED,
+                        fmt.Sprintf("Certificate rejected due to invalid assertion: %s", cert.Subject.CommonName),
+                        CertificateEvent{
+                                CertificateInfo: extractCertificateInfo(cert),
+                                Reason:          "assertion validation failed",
+                                Error:           err,
+                        },
+                )
+                return "", fmt.Errorf("assertion validation failed: %w", err)
+        }</span>
+
+        // Verify certificate against trusted CAs
+        <span class="cov8" title="1">opts := x509.VerifyOptions{
+                Roots:         a.certPool,
+                Intermediates: x509.NewCertPool(),
+                CurrentTime:   time.Now(),
+                KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+        }
+        if _, err := cert.Verify(opts); err != nil </span><span class="cov8" title="1">{
+                a.certificateLogger.Emit(CERTIFICATE_REJECTED,
+                        fmt.Sprintf("Certificate rejected: %s", cert.Subject.CommonName),
+                        CertificateEvent{
+                                CertificateInfo: extractCertificateInfo(cert),
+                                Reason:          "validation failed",
+                                Error:           err,
+                        },
+                )
+                return "", fmt.Errorf("certificate verification failed: %w", err)
+        }</span>
+
+        // Check if already cached
+        <span class="cov8" title="1">fingerprint := getFingerprint(cert)
+        if cached, exists := a.cache.Get(fingerprint); exists </span><span class="cov8" title="1">{
+                return a.createToken(cached)
+        }</span>
+
+        // Create new context with certificate info
+        <span class="cov8" title="1">ctx := &amp;Context[M]{
+                CertificateInfo:        extractCertificateInfo(cert),
+                CertificateFingerprint: fingerprint,
+                IssuedAt:               time.Now(),
+        }
+
+        // Run context enrichment pipeline
+        if a.contextPipeline == nil </span><span class="cov8" title="1">{
+                return "", errors.New("no context pipeline configured - use LoadContextSchema()")
+        }</span>
+
+        // Run pipeline
+        <span class="cov8" title="1">result, err := a.contextPipeline.Process(context.Background(), ctx)
+        if err != nil </span><span class="cov8" title="1">{
+                return "", err
+        }</span>
+        <span class="cov8" title="1">ctx = result
+
+        // Cache and return token
+        a.cache.Store(fingerprint, ctx)
+        token, err := a.createToken(ctx)
+        if err != nil </span><span class="cov0" title="0">{
+                return "", err
+        }</span>
+
+        // Emit audit event
+        <span class="cov8" title="1">a.contextLogger.Emit(TOKEN_GENERATED,
+                fmt.Sprintf("Token generated for %s", ctx.CertificateInfo.CommonName),
+                ContextEvent[M]{
+                        Context:   ctx,
+                        Token:     string(token),
+                        Operation: "generated",
+                },
+        )
+
+        return token, nil</span>
+}
+
+
+// OnContext registers hooks for context/token events
+func (a *adminService[M]) OnContext(signal zlog.Signal, hooks ...func(context.Context, zlog.Event[ContextEvent[M]]) (zlog.Event[ContextEvent[M]], error)) <span class="cov8" title="1">{
+        for _, hook := range hooks </span><span class="cov8" title="1">{
+                wrapped := pipz.Apply[zlog.Event[ContextEvent[M]]]("user-hook", hook)
+                a.contextLogger.Hook(signal, wrapped)
+        }</span>
+}
+
+// OnCertificate registers hooks for certificate events
+func (a *adminService[M]) OnCertificate(signal zlog.Signal, hooks ...func(context.Context, zlog.Event[CertificateEvent]) (zlog.Event[CertificateEvent], error)) <span class="cov8" title="1">{
+        for _, hook := range hooks </span><span class="cov8" title="1">{
+                wrapped := pipz.Apply[zlog.Event[CertificateEvent]]("user-hook", hook)
+                a.certificateLogger.Hook(signal, wrapped)
+        }</span>
+}
+
+
+// createToken creates a signed token from a context
+func (a *adminService[M]) createToken(ctx *Context[M]) (SignedToken, error) <span class="cov8" title="1">{
+        payload := &amp;tokenPayload{
+                Fingerprint: ctx.CertificateFingerprint,
+                Expiry:      ctx.ExpiresAt,
+                Nonce:       generateContextID(),
+        }
+
+        return encodeAndSign(payload, a.signer)
+}</span>
+
+// decryptToken decrypts a token and returns the fingerprint
+func (a *adminService[M]) decryptToken(token SignedToken) (string, error) <span class="cov8" title="1">{
+        payload, err := verifyTokenPayload(token, a.publicKey)
+        if err != nil </span><span class="cov8" title="1">{
+                return "", err
+        }</span>
+        <span class="cov8" title="1">return payload.Fingerprint, nil</span>
+}
+
+// SetGuardCreationPermissions configures which permissions are required to create guards
+func (a *adminService[M]) SetGuardCreationPermissions(perms []string) <span class="cov8" title="1">{
+        a.guardCreationPermissions = perms
+}</span>
+
+// CreateGuard creates a new guard that validates tokens for specific permissions
+func (a *adminService[M]) CreateGuard(token SignedToken, requiredPerms ...string) (Guard, error) <span class="cov8" title="1">{
+        // 1. Validate token and get context
+        fingerprint, err := a.decryptToken(token)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("invalid token: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">context, exists := a.cache.Get(fingerprint)
+        if !exists </span><span class="cov8" title="1">{
+                return nil, errors.New("context not found")
+        }</span>
+
+        <span class="cov8" title="1">if context.IsExpired() </span><span class="cov8" title="1">{
+                return nil, errors.New("token expired")
+        }</span>
+
+        // 2. Check guard creation permissions
+        <span class="cov8" title="1">if len(a.guardCreationPermissions) &gt; 0 </span><span class="cov8" title="1">{
+                for _, perm := range a.guardCreationPermissions </span><span class="cov8" title="1">{
+                        if !hasPermission(context.Permissions, perm) </span><span class="cov8" title="1">{
+                                return nil, fmt.Errorf("missing required permission to create guards: %s", perm)
+                        }</span>
+                }
+        }
+
+        // 3. Ensure guard can only check permissions the creator has
+        <span class="cov8" title="1">for _, perm := range requiredPerms </span><span class="cov8" title="1">{
+                if !hasPermission(context.Permissions, perm) </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("cannot create guard for permission you don't have: %s", perm)
+                }</span>
+        }
+
+        // 4. Create guard closure
+        <span class="cov8" title="1">guardID := generateGuardID()
+        guard := &amp;guardImpl{
+                id:                  guardID,
+                requiredPermissions: requiredPerms,
+                validate: func(t SignedToken) error </span><span class="cov8" title="1">{
+                        // Decrypt and validate token
+                        fp, err := a.decryptToken(t)
+                        if err != nil </span><span class="cov8" title="1">{
+                                return fmt.Errorf("invalid token: %w", err)
+                        }</span>
+
+                        // Get context and check permissions
+                        <span class="cov8" title="1">ctx, exists := a.cache.Get(fp)
+                        if !exists </span><span class="cov8" title="1">{
+                                return errors.New("context not found")
+                        }</span>
+
+                        <span class="cov8" title="1">if ctx.IsExpired() </span><span class="cov8" title="1">{
+                                return errors.New("token expired")
+                        }</span>
+
+                        // Check required permissions
+                        <span class="cov8" title="1">for _, perm := range requiredPerms </span><span class="cov8" title="1">{
+                                if !hasPermission(ctx.Permissions, perm) </span><span class="cov8" title="1">{
+                                        return fmt.Errorf("missing permission: %s", perm)
+                                }</span>
+                        }
+
+                        <span class="cov8" title="1">return nil</span>
+                },
+        }
+
+        // 5. Emit event
+        <span class="cov8" title="1">a.contextLogger.Emit(GUARD_CREATED,
+                fmt.Sprintf("Guard %s created by %s", guardID, context.CertificateInfo.CommonName),
+                ContextEvent[M]{
+                        Context:   context,
+                        Token:     string(token),
+                        Operation: "guard_created",
+                },
+        )
+
+        return guard, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package sctx
+
+import (
+        "context"
+        "crypto"
+        "crypto/ecdsa"
+        "crypto/ed25519"
+        "crypto/rand"
+        "crypto/rsa"
+        "crypto/x509"
+        "encoding/base64"
+        "encoding/json"
+        "errors"
+        "fmt"
+        "time"
+
+        "github.com/zoobzio/pipz"
+)
+
+// SignedAssertion represents a signed claim proving private key possession
+type SignedAssertion struct {
+        Claims    AssertionClaims
+        Signature []byte
+}
+
+// AssertionClaims contains the claims within an assertion
+type AssertionClaims struct {
+        IssuedAt    time.Time `json:"iat"`
+        ExpiresAt   time.Time `json:"exp"`
+        Nonce       string    `json:"nonce"`
+        Purpose     string    `json:"purpose"`
+        Fingerprint string    `json:"fingerprint"` // Must match certificate
+}
+
+// AssertionContext is used for pipeline processing
+type AssertionContext struct {
+        Assertion   SignedAssertion
+        Certificate *x509.Certificate
+}
+
+// Clone implements pipz.Cloner interface
+func (ac *AssertionContext) Clone() *AssertionContext <span class="cov8" title="1">{
+        return &amp;AssertionContext{
+                Assertion: SignedAssertion{
+                        Claims:    ac.Assertion.Claims,
+                        Signature: append([]byte(nil), ac.Assertion.Signature...),
+                },
+                Certificate: ac.Certificate,
+        }
+}</span>
+
+// CreateAssertion helps clients create properly signed assertions
+func CreateAssertion(privateKey crypto.PrivateKey, cert *x509.Certificate) (SignedAssertion, error) <span class="cov8" title="1">{
+        if privateKey == nil || cert == nil </span><span class="cov8" title="1">{
+                return SignedAssertion{}, errors.New("private key and certificate required")
+        }</span>
+
+        // Verify key matches certificate
+        <span class="cov8" title="1">if !certificateMatchesKey(cert, privateKey) </span><span class="cov8" title="1">{
+                return SignedAssertion{}, errors.New("private key does not match certificate")
+        }</span>
+
+        // Create claims
+        <span class="cov8" title="1">nonce := make([]byte, 32)
+        if _, err := rand.Read(nonce); err != nil </span><span class="cov0" title="0">{
+                return SignedAssertion{}, fmt.Errorf("failed to generate nonce: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">claims := AssertionClaims{
+                IssuedAt:    time.Now(),
+                ExpiresAt:   time.Now().Add(1 * time.Minute),
+                Nonce:       base64.RawURLEncoding.EncodeToString(nonce),
+                Purpose:     "token-generation",
+                Fingerprint: getFingerprint(cert),
+        }
+
+        // Sign claims
+        return signAssertion(claims, privateKey)</span>
+}
+
+// signAssertion signs the claims with the private key
+func signAssertion(claims AssertionClaims, privateKey crypto.PrivateKey) (SignedAssertion, error) <span class="cov8" title="1">{
+        // Serialize claims
+        claimsJSON, err := json.Marshal(claims)
+        if err != nil </span><span class="cov0" title="0">{
+                return SignedAssertion{}, fmt.Errorf("failed to marshal claims: %w", err)
+        }</span>
+
+        // Sign based on key type
+        <span class="cov8" title="1">var signature []byte
+        switch key := privateKey.(type) </span>{
+        case ed25519.PrivateKey:<span class="cov8" title="1">
+                // Ed25519 signs the data directly (no hashing)
+                signature = ed25519.Sign(key, claimsJSON)</span>
+        case crypto.Signer:<span class="cov8" title="1">
+                // For other algorithms, hash first
+                hash := crypto.SHA256
+                hasher := hash.New()
+                hasher.Write(claimsJSON)
+                digest := hasher.Sum(nil)
+                
+                signature, err = key.Sign(rand.Reader, digest, hash)
+                if err != nil </span><span class="cov8" title="1">{
+                        return SignedAssertion{}, fmt.Errorf("failed to sign assertion: %w", err)
+                }</span>
+        default:<span class="cov8" title="1">
+                return SignedAssertion{}, errors.New("private key must implement crypto.Signer")</span>
+        }
+
+        <span class="cov8" title="1">return SignedAssertion{
+                Claims:    claims,
+                Signature: signature,
+        }, nil</span>
+}
+
+// verifyAssertion verifies the assertion signature using the certificate's public key
+func verifyAssertion(assertion SignedAssertion, cert *x509.Certificate) error <span class="cov8" title="1">{
+        // Serialize claims
+        claimsJSON, err := json.Marshal(assertion.Claims)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to marshal claims: %w", err)
+        }</span>
+
+        // Detect algorithm from certificate's public key
+        <span class="cov8" title="1">algorithm, err := DetectAlgorithmFromPublicKey(cert.PublicKey)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Create a temporary signer to use its Verify method
+        <span class="cov8" title="1">var verified bool
+        switch algorithm </span>{
+        case CryptoEd25519:<span class="cov8" title="1">
+                signer := &amp;ed25519Signer{}
+                verified = signer.Verify(claimsJSON, assertion.Signature, cert.PublicKey)</span>
+        case CryptoECDSAP256:<span class="cov8" title="1">
+                signer := &amp;ecdsaP256Signer{}
+                // Pass claimsJSON, not digest - the signer handles hashing internally
+                verified = signer.Verify(claimsJSON, assertion.Signature, cert.PublicKey)</span>
+        default:<span class="cov0" title="0">
+                return fmt.Errorf("unsupported algorithm: %v", algorithm)</span>
+        }
+
+        <span class="cov8" title="1">if !verified </span><span class="cov8" title="1">{
+                return errors.New("invalid signature")
+        }</span>
+        <span class="cov8" title="1">return nil</span>
+}
+
+// certificateMatchesKey verifies that a private key matches a certificate
+func certificateMatchesKey(cert *x509.Certificate, privateKey crypto.PrivateKey) bool <span class="cov8" title="1">{
+        // Get public key from private key
+        var pubKey crypto.PublicKey
+        switch k := privateKey.(type) </span>{
+        case interface{ Public() crypto.PublicKey }:<span class="cov8" title="1">
+                pubKey = k.Public()</span>
+        default:<span class="cov8" title="1">
+                return false</span>
+        }
+
+        // Compare with certificate's public key
+        <span class="cov8" title="1">return publicKeysEqual(cert.PublicKey, pubKey)</span>
+}
+
+// publicKeysEqual compares two public keys for equality
+func publicKeysEqual(a, b crypto.PublicKey) bool <span class="cov8" title="1">{
+        switch ka := a.(type) </span>{
+        case ed25519.PublicKey:<span class="cov8" title="1">
+                kb, ok := b.(ed25519.PublicKey)
+                return ok &amp;&amp; string(ka) == string(kb)</span>
+        case *ecdsa.PublicKey:<span class="cov8" title="1">
+                kb, ok := b.(*ecdsa.PublicKey)
+                return ok &amp;&amp; ka.Equal(kb)</span>
+        case *rsa.PublicKey:<span class="cov8" title="1">
+                kb, ok := b.(*rsa.PublicKey)
+                return ok &amp;&amp; ka.Equal(kb)</span>
+        default:<span class="cov8" title="1">
+                return false</span>
+        }
+}
+
+// Processor names for assertion validation
+const (
+        ProcessorVerifySignature   = "verify-signature"
+        ProcessorCheckExpiration   = "check-expiration"
+        ProcessorCheckNonce        = "check-nonce"
+        ProcessorValidateClaims    = "validate-claims"
+        ProcessorMatchFingerprint  = "match-fingerprint"
+)
+
+// CreateAssertionProcessors creates processors for assertion validation
+func CreateAssertionProcessors[M any]() map[string]pipz.Chainable[*AssertionContext] <span class="cov8" title="1">{
+        processors := map[string]pipz.Chainable[*AssertionContext]{
+                ProcessorVerifySignature:  verifySignatureProcessor(),
+                ProcessorCheckExpiration:  checkExpirationProcessor(),
+                ProcessorMatchFingerprint: matchFingerprintProcessor(),
+        }
+
+        // Add claim validators
+        processors[ProcessorValidateClaims] = validateClaimsProcessor()
+
+        return processors
+}</span>
+
+// verifySignatureProcessor verifies the assertion signature matches the certificate
+var verifySignatureProcessor = func() pipz.Chainable[*AssertionContext] <span class="cov8" title="1">{
+        return pipz.Apply[*AssertionContext](ProcessorVerifySignature,
+                func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) </span><span class="cov8" title="1">{
+                        if err := verifyAssertion(ac.Assertion, ac.Certificate); err != nil </span><span class="cov8" title="1">{
+                                return nil, fmt.Errorf("signature verification failed: %w", err)
+                        }</span>
+                        <span class="cov8" title="1">return ac, nil</span>
+                })
+}
+
+// checkExpirationProcessor ensures the assertion hasn't expired
+var checkExpirationProcessor = func() pipz.Chainable[*AssertionContext] <span class="cov8" title="1">{
+        return pipz.Apply[*AssertionContext](ProcessorCheckExpiration,
+                func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) </span><span class="cov8" title="1">{
+                        now := time.Now()
+                        
+                        // Check not expired
+                        if now.After(ac.Assertion.Claims.ExpiresAt) </span><span class="cov8" title="1">{
+                                return nil, errors.New("assertion expired")
+                        }</span>
+                        
+                        // Check not issued in future (with 10s clock skew)
+                        <span class="cov8" title="1">if ac.Assertion.Claims.IssuedAt.After(now.Add(10 * time.Second)) </span><span class="cov8" title="1">{
+                                return nil, errors.New("assertion issued in future")
+                        }</span>
+                        
+                        // Check reasonable lifetime (max 5 minutes)
+                        <span class="cov8" title="1">lifetime := ac.Assertion.Claims.ExpiresAt.Sub(ac.Assertion.Claims.IssuedAt)
+                        if lifetime &gt; 5*time.Minute </span><span class="cov8" title="1">{
+                                return nil, fmt.Errorf("assertion lifetime too long: %v", lifetime)
+                        }</span>
+                        
+                        <span class="cov8" title="1">return ac, nil</span>
+                })
+}
+
+// checkNonceProcessor prevents replay attacks
+func checkNonceProcessor[M any](admin *adminService[M]) pipz.Chainable[*AssertionContext] <span class="cov8" title="1">{
+        return pipz.Apply[*AssertionContext](ProcessorCheckNonce,
+                func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) </span><span class="cov8" title="1">{
+                        nonce := ac.Assertion.Claims.Nonce
+                        if nonce == "" </span><span class="cov8" title="1">{
+                                return nil, errors.New("assertion missing nonce")
+                        }</span>
+
+                        <span class="cov8" title="1">admin.nonceMu.Lock()
+                        defer admin.nonceMu.Unlock()
+
+                        // Clean expired nonces
+                        now := time.Now()
+                        for n, expiry := range admin.nonceCache </span><span class="cov8" title="1">{
+                                if now.After(expiry) </span><span class="cov8" title="1">{
+                                        delete(admin.nonceCache, n)
+                                }</span>
+                        }
+
+                        // Check if nonce was already used
+                        <span class="cov8" title="1">if _, exists := admin.nonceCache[nonce]; exists </span><span class="cov8" title="1">{
+                                return nil, errors.New("nonce already used")
+                        }</span>
+
+                        // Store nonce with expiration
+                        <span class="cov8" title="1">admin.nonceCache[nonce] = ac.Assertion.Claims.ExpiresAt.Add(5 * time.Minute)
+
+                        return ac, nil</span>
+                })
+}
+
+// matchFingerprintProcessor ensures assertion matches certificate
+var matchFingerprintProcessor = func() pipz.Chainable[*AssertionContext] <span class="cov8" title="1">{
+        return pipz.Apply[*AssertionContext](ProcessorMatchFingerprint,
+                func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) </span><span class="cov8" title="1">{
+                        certFingerprint := getFingerprint(ac.Certificate)
+                        if ac.Assertion.Claims.Fingerprint != certFingerprint </span><span class="cov8" title="1">{
+                                return nil, fmt.Errorf("fingerprint mismatch: assertion has %s, certificate has %s",
+                                        ac.Assertion.Claims.Fingerprint, certFingerprint)
+                        }</span>
+                        <span class="cov8" title="1">return ac, nil</span>
+                })
+}
+
+// validateClaimsProcessor ensures required claims are present
+var validateClaimsProcessor = func() pipz.Chainable[*AssertionContext] <span class="cov8" title="1">{
+        return pipz.Apply[*AssertionContext](ProcessorValidateClaims,
+                func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) </span><span class="cov8" title="1">{
+                        claims := ac.Assertion.Claims
+                        
+                        // Validate purpose
+                        if claims.Purpose != "token-generation" </span><span class="cov8" title="1">{
+                                return nil, fmt.Errorf("invalid purpose: %s", claims.Purpose)
+                        }</span>
+                        
+                        // All validations passed
+                        <span class="cov8" title="1">return ac, nil</span>
+                })
+}</pre>
+		
+		<pre class="file" id="file2" style="display: none">package sctx
+
+import (
+        "sync"
+        "time"
+
+        "github.com/zoobzio/zlog"
+)
+
+// ContextCache manages active contexts with automatic cleanup
+type ContextCache[M any] interface {
+        // Get retrieves an active context by certificate fingerprint
+        Get(fingerprint string) (*Context[M], bool)
+
+        // Store stores or updates an active context
+        Store(fingerprint string, ctx *Context[M])
+
+        // Delete removes an active token
+        Delete(fingerprint string) error
+
+        // Start begins the cleanup goroutine
+        Start(shutdown chan struct{}, wg *sync.WaitGroup)
+}
+
+// memoryContextCache is an in-memory implementation of ContextCache
+type memoryContextCache[M any] struct {
+        contexts        map[string]*Context[M]
+        mu              sync.RWMutex
+        cleanupInterval time.Duration
+}
+
+// newMemoryContextCache creates a new in-memory context cache (private)
+func newMemoryContextCache[M any](cleanupInterval time.Duration) ContextCache[M] <span class="cov8" title="1">{
+        if cleanupInterval == 0 </span><span class="cov8" title="1">{
+                cleanupInterval = 5 * time.Minute
+        }</span>
+        <span class="cov8" title="1">return &amp;memoryContextCache[M]{
+                contexts:        make(map[string]*Context[M]),
+                cleanupInterval: cleanupInterval,
+        }</span>
+}
+
+// Get retrieves an active context by certificate fingerprint
+func (s *memoryContextCache[M]) Get(fingerprint string) (*Context[M], bool) <span class="cov8" title="1">{
+        s.mu.RLock()
+        defer s.mu.RUnlock()
+
+        ctx, exists := s.contexts[fingerprint]
+        return ctx, exists
+}</span>
+
+// Set stores or updates an active context
+func (s *memoryContextCache[M]) Store(fingerprint string, ctx *Context[M]) <span class="cov8" title="1">{
+        s.mu.Lock()
+        defer s.mu.Unlock()
+
+        s.contexts[fingerprint] = ctx
+}</span>
+
+// Delete removes an active context
+func (s *memoryContextCache[M]) Delete(fingerprint string) error <span class="cov8" title="1">{
+        s.mu.Lock()
+        defer s.mu.Unlock()
+
+        delete(s.contexts, fingerprint)
+        return nil
+}</span>
+
+// Start begins the cleanup goroutine
+func (s *memoryContextCache[M]) Start(shutdown chan struct{}, wg *sync.WaitGroup) <span class="cov8" title="1">{
+        wg.Add(1)
+        go func() </span><span class="cov8" title="1">{
+                defer wg.Done()
+                s.cleanupExpiredContexts(shutdown)
+        }</span>()
+}
+
+// cleanupExpiredContexts periodically removes expired contexts
+func (s *memoryContextCache[M]) cleanupExpiredContexts(shutdown chan struct{}) <span class="cov8" title="1">{
+        ticker := time.NewTicker(s.cleanupInterval)
+        defer ticker.Stop()
+
+        for </span><span class="cov8" title="1">{
+                select </span>{
+                case &lt;-shutdown:<span class="cov8" title="1">
+                        return</span>
+                case &lt;-ticker.C:<span class="cov8" title="1">
+                        s.mu.Lock()
+                        now := time.Now()
+                        for fingerprint, ctx := range s.contexts </span><span class="cov8" title="1">{
+                                if now.After(ctx.ExpiresAt) </span><span class="cov8" title="1">{
+                                        delete(s.contexts, fingerprint)
+                                        // Emit audit event for natural expiration
+                                        cn := ""
+                                        if ctx != nil </span><span class="cov8" title="1">{
+                                                cn = ctx.CertificateInfo.CommonName
+                                        }</span>
+                                        <span class="cov8" title="1">zlog.Emit(CONTEXT_EXPIRED, "Context expired naturally",
+                                                zlog.String("fingerprint", fingerprint),
+                                                zlog.String("cn", cn),
+                                                zlog.Time("expired_at", ctx.ExpiresAt),
+                                        )</span>
+                                }
+                        }
+                        <span class="cov8" title="1">s.mu.Unlock()</span>
+                }
+        }
+}
+
+// Count returns the number of active contexts (useful for stats/testing)
+func (s *memoryContextCache[M]) Count() int <span class="cov8" title="1">{
+        s.mu.RLock()
+        defer s.mu.RUnlock()
+        return len(s.contexts)
+}</span>
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package sctx
+
+import (
+        "crypto"
+        "crypto/rand"
+        "crypto/sha256"
+        "crypto/x509"
+        "encoding/base64"
+        "encoding/json"
+        "errors"
+        "fmt"
+        "slices"
+        "strings"
+        "time"
+
+        "github.com/zoobzio/zlog"
+)
+
+var (
+        ErrInvalidSignature = errors.New("invalid signature")
+        ErrExpiredContext   = errors.New("context has expired")
+        ErrInvalidContext   = errors.New("invalid context format")
+)
+
+// SignedToken is an opaque, tamper-proof security token.
+// It contains a signed reference to a cached context.
+// Tokens can only be created by the ContextService and must be verified before use.
+type SignedToken string
+
+
+// CertificateInfo contains extracted certificate information
+// This replaces storing the full x509.Certificate for better serialization
+type CertificateInfo struct {
+        CommonName    string    // Subject common name for audit logs
+        SerialNumber  string    // Certificate serial number for identification
+        NotBefore     time.Time // Certificate validity start
+        NotAfter      time.Time // Certificate validity end
+        Issuer        string    // Certificate issuer for audit/compliance
+        KeyUsage      []string  // Key usage extensions for validation
+}
+
+// Context contains the security context information
+type Context[M any] struct {
+        IssuedAt               time.Time
+        ExpiresAt              time.Time
+        Metadata               M
+        CertificateInfo        CertificateInfo
+        CertificateFingerprint string
+        Permissions            []string
+}
+
+// HasPermission checks if the context data includes a specific permission scope
+func (c *Context[M]) HasPermission(scope string) bool <span class="cov8" title="1">{
+        return slices.Contains(c.Permissions, scope)
+}</span>
+
+// IsExpired checks if the context data has expired
+func (c *Context[M]) IsExpired() bool <span class="cov8" title="1">{
+        return time.Now().After(c.ExpiresAt)
+}</span>
+
+// Clone creates a deep copy of the context for parallel processing
+func (c *Context[M]) Clone() *Context[M] <span class="cov8" title="1">{
+        if c == nil </span><span class="cov8" title="1">{
+                return nil
+        }</span>
+
+        <span class="cov8" title="1">clone := &amp;Context[M]{
+                IssuedAt:               c.IssuedAt,
+                ExpiresAt:              c.ExpiresAt,
+                Metadata:               c.Metadata, // M is any, shallow copy should be fine
+                CertificateFingerprint: c.CertificateFingerprint,
+        }
+
+        // Deep copy CertificateInfo
+        clone.CertificateInfo = CertificateInfo{
+                CommonName:   c.CertificateInfo.CommonName,
+                SerialNumber: c.CertificateInfo.SerialNumber,
+                NotBefore:    c.CertificateInfo.NotBefore,
+                NotAfter:     c.CertificateInfo.NotAfter,
+                Issuer:       c.CertificateInfo.Issuer,
+        }
+
+        // Deep copy KeyUsage slice
+        if c.CertificateInfo.KeyUsage != nil </span><span class="cov8" title="1">{
+                clone.CertificateInfo.KeyUsage = make([]string, len(c.CertificateInfo.KeyUsage))
+                copy(clone.CertificateInfo.KeyUsage, c.CertificateInfo.KeyUsage)
+        }</span>
+
+        // Deep copy permissions slice
+        <span class="cov8" title="1">if c.Permissions != nil </span><span class="cov8" title="1">{
+                clone.Permissions = make([]string, len(c.Permissions))
+                copy(clone.Permissions, c.Permissions)
+        }</span>
+
+        <span class="cov8" title="1">return clone</span>
+}
+
+// tokenPayload represents the wire format of a session token
+type tokenPayload struct {
+        Fingerprint string    `json:"f"` // Certificate fingerprint
+        Expiry      time.Time `json:"e"` // Token expiry
+        Nonce       string    `json:"n"` // Random nonce for uniqueness
+}
+
+// encodeAndSign creates a signed session token from a payload
+func encodeAndSign(payload *tokenPayload, signer CryptoSigner) (SignedToken, error) <span class="cov8" title="1">{
+        // Serialize the payload
+        payloadBytes, err := json.Marshal(payload)
+        if err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("failed to marshal token payload: %w", err)
+        }</span>
+
+        // Sign the payload
+        <span class="cov8" title="1">signatureBytes, err := signer.Sign(payloadBytes)
+        if err != nil </span><span class="cov8" title="1">{
+                return "", fmt.Errorf("failed to sign token: %w", err)
+        }</span>
+
+        // Combine payload and signature
+        // Format: base64(payload):base64(signature)
+        <span class="cov8" title="1">token := fmt.Sprintf("%s:%s",
+                base64.URLEncoding.EncodeToString(payloadBytes),
+                base64.URLEncoding.EncodeToString(signatureBytes),
+        )
+
+        return SignedToken(token), nil</span>
+}
+
+// verifyTokenPayload verifies a token and returns the payload
+func verifyTokenPayload(token SignedToken, publicKey crypto.PublicKey) (*tokenPayload, error) <span class="cov8" title="1">{
+        // Split token into payload and signature
+        parts := strings.Split(string(token), ":")
+        if len(parts) != 2 </span><span class="cov8" title="1">{
+                zlog.Emit(TOKEN_REJECTED, "Token verification failed - invalid format",
+                        zlog.String("reason", "malformed_token"),
+                )
+                return nil, ErrInvalidContext
+        }</span>
+
+        // Decode payload and signature
+        <span class="cov8" title="1">payloadBytes, err := base64.URLEncoding.DecodeString(parts[0])
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, ErrInvalidContext
+        }</span>
+
+        <span class="cov8" title="1">signatureBytes, err := base64.URLEncoding.DecodeString(parts[1])
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, ErrInvalidContext
+        }</span>
+
+        // Detect algorithm from public key
+        <span class="cov8" title="1">algorithm, err := DetectAlgorithmFromPublicKey(publicKey)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, ErrInvalidSignature
+        }</span>
+
+        // Create verifier
+        <span class="cov8" title="1">var signer CryptoSigner
+        switch algorithm </span>{
+        case CryptoEd25519:<span class="cov8" title="1">
+                signer = &amp;ed25519Signer{}</span>
+        case CryptoECDSAP256:<span class="cov0" title="0">
+                signer = &amp;ecdsaP256Signer{}</span>
+        default:<span class="cov0" title="0">
+                return nil, ErrInvalidSignature</span>
+        }
+
+        // Verify signature
+        <span class="cov8" title="1">if !signer.Verify(payloadBytes, signatureBytes, publicKey) </span><span class="cov0" title="0">{
+                zlog.Emit(TOKEN_REJECTED, "Token verification failed - invalid signature",
+                        zlog.String("reason", "signature_verification_failed"),
+                        zlog.String("algorithm", string(algorithm)),
+                )
+                return nil, ErrInvalidSignature
+        }</span>
+
+        // Unmarshal payload
+        <span class="cov8" title="1">var payload tokenPayload
+        if err := json.Unmarshal(payloadBytes, &amp;payload); err != nil </span><span class="cov0" title="0">{
+                return nil, ErrInvalidContext
+        }</span>
+
+        // Check expiration
+        <span class="cov8" title="1">if time.Now().After(payload.Expiry) </span><span class="cov0" title="0">{
+                zlog.Emit(TOKEN_REJECTED, "Token verification failed - expired",
+                        zlog.String("reason", "expired"),
+                        zlog.String("fingerprint", payload.Fingerprint),
+                        zlog.Time("expired_at", payload.Expiry),
+                )
+                return nil, ErrExpiredContext
+        }</span>
+
+        // Successful verification
+        <span class="cov8" title="1">zlog.Emit(TOKEN_VERIFIED, "Token successfully verified",
+                zlog.String("fingerprint", payload.Fingerprint),
+                zlog.String("algorithm", string(algorithm)),
+        )
+
+        return &amp;payload, nil</span>
+}
+
+// getFingerprint calculates the SHA256 fingerprint of a certificate
+func getFingerprint(cert *x509.Certificate) string <span class="cov8" title="1">{
+        if cert == nil </span><span class="cov8" title="1">{
+                return ""
+        }</span>
+        <span class="cov8" title="1">hash := sha256.Sum256(cert.Raw)
+        return base64.StdEncoding.EncodeToString(hash[:])</span>
+}
+
+// extractCertificateInfo extracts relevant information from an x509.Certificate
+// This allows us to avoid storing the full certificate while retaining necessary data
+func extractCertificateInfo(cert *x509.Certificate) CertificateInfo <span class="cov8" title="1">{
+        if cert == nil </span><span class="cov8" title="1">{
+                return CertificateInfo{}
+        }</span>
+
+        // Extract key usage information
+        <span class="cov8" title="1">var keyUsage []string
+        if cert.KeyUsage&amp;x509.KeyUsageDigitalSignature != 0 </span><span class="cov8" title="1">{
+                keyUsage = append(keyUsage, "digital_signature")
+        }</span>
+        <span class="cov8" title="1">if cert.KeyUsage&amp;x509.KeyUsageKeyEncipherment != 0 </span><span class="cov8" title="1">{
+                keyUsage = append(keyUsage, "key_encipherment")
+        }</span>
+        <span class="cov8" title="1">if cert.KeyUsage&amp;x509.KeyUsageDataEncipherment != 0 </span><span class="cov8" title="1">{
+                keyUsage = append(keyUsage, "data_encipherment")
+        }</span>
+        <span class="cov8" title="1">if cert.KeyUsage&amp;x509.KeyUsageCertSign != 0 </span><span class="cov8" title="1">{
+                keyUsage = append(keyUsage, "cert_sign")
+        }</span>
+
+        // Add extended key usage
+        <span class="cov8" title="1">for _, usage := range cert.ExtKeyUsage </span><span class="cov8" title="1">{
+                switch usage </span>{
+                case x509.ExtKeyUsageClientAuth:<span class="cov8" title="1">
+                        keyUsage = append(keyUsage, "client_auth")</span>
+                case x509.ExtKeyUsageServerAuth:<span class="cov8" title="1">
+                        keyUsage = append(keyUsage, "server_auth")</span>
+                case x509.ExtKeyUsageCodeSigning:<span class="cov8" title="1">
+                        keyUsage = append(keyUsage, "code_signing")</span>
+                case x509.ExtKeyUsageEmailProtection:<span class="cov8" title="1">
+                        keyUsage = append(keyUsage, "email_protection")</span>
+                }
+        }
+
+        <span class="cov8" title="1">return CertificateInfo{
+                CommonName:   cert.Subject.CommonName,
+                SerialNumber: cert.SerialNumber.String(),
+                NotBefore:    cert.NotBefore,
+                NotAfter:     cert.NotAfter,
+                Issuer:       cert.Issuer.CommonName,
+                KeyUsage:     keyUsage,
+        }</span>
+}
+
+// generateContextID creates a unique context identifier
+func generateContextID() string <span class="cov8" title="1">{
+        b := make([]byte, 16)
+        if _, err := rand.Read(b); err != nil </span><span class="cov0" title="0">{
+                panic(err)</span> // This should never happen
+        }
+        <span class="cov8" title="1">return base64.URLEncoding.EncodeToString(b)</span>
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">package sctx
+
+import (
+        "crypto"
+        "crypto/ecdsa"
+        "crypto/ed25519"
+        "crypto/elliptic"
+        "crypto/rand"
+        "crypto/sha256"
+        "encoding/asn1"
+        "fmt"
+        "math/big"
+)
+
+// CryptoAlgorithm represents the supported cryptographic algorithms
+type CryptoAlgorithm string
+
+const (
+        // CryptoEd25519 is the default high-performance algorithm (30% faster than ECDSA)
+        CryptoEd25519 CryptoAlgorithm = "ed25519"
+
+        // CryptoECDSAP256 is the FIPS 140-2 compliant algorithm for government/compliance requirements
+        CryptoECDSAP256 CryptoAlgorithm = "ecdsa-p256"
+
+        // DefaultCryptoAlgorithm prioritizes performance - governments can opt into compliance
+        DefaultCryptoAlgorithm = CryptoEd25519
+)
+
+// CryptoSigner provides algorithm-agnostic cryptographic operations
+type CryptoSigner interface {
+        // Sign signs the provided data
+        Sign(data []byte) ([]byte, error)
+
+        // Verify verifies a signature against data and public key
+        Verify(data []byte, signature []byte, publicKey crypto.PublicKey) bool
+
+        // Algorithm returns the algorithm identifier
+        Algorithm() CryptoAlgorithm
+
+        // PublicKey returns the public key
+        PublicKey() crypto.PublicKey
+
+        // KeyType returns a string description for debugging
+        KeyType() string
+}
+
+// NewCryptoSigner creates a new crypto signer for the specified algorithm
+func NewCryptoSigner(algorithm CryptoAlgorithm, privateKey crypto.PrivateKey) (CryptoSigner, error) <span class="cov8" title="1">{
+        if privateKey == nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("private key is required")
+        }</span>
+
+        <span class="cov8" title="1">switch algorithm </span>{
+        case CryptoEd25519:<span class="cov8" title="1">
+                ed25519Key, ok := privateKey.(ed25519.PrivateKey)
+                if !ok </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("private key must be ed25519.PrivateKey for Ed25519 algorithm")
+                }</span>
+                <span class="cov8" title="1">return &amp;ed25519Signer{privateKey: ed25519Key}, nil</span>
+
+        case CryptoECDSAP256:<span class="cov8" title="1">
+                ecdsaKey, ok := privateKey.(*ecdsa.PrivateKey)
+                if !ok </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("private key must be *ecdsa.PrivateKey for ECDSA P-256 algorithm")
+                }</span>
+                <span class="cov8" title="1">if ecdsaKey == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("private key is required")
+                }</span>
+                <span class="cov8" title="1">if ecdsaKey.Curve != elliptic.P256() </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("ECDSA private key must use P-256 curve for NIST compliance")
+                }</span>
+                <span class="cov8" title="1">return &amp;ecdsaP256Signer{privateKey: ecdsaKey}, nil</span>
+
+        default:<span class="cov8" title="1">
+                return nil, fmt.Errorf("unsupported algorithm: %s", algorithm)</span>
+        }
+}
+
+// GenerateKeyPair generates a key pair for the specified algorithm
+func GenerateKeyPair(algorithm CryptoAlgorithm) (crypto.PrivateKey, crypto.PublicKey, error) <span class="cov8" title="1">{
+        switch algorithm </span>{
+        case CryptoEd25519:<span class="cov8" title="1">
+                publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+                return privateKey, publicKey, err</span>
+
+        case CryptoECDSAP256:<span class="cov8" title="1">
+                privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, nil, err
+                }</span>
+                <span class="cov8" title="1">return privateKey, &amp;privateKey.PublicKey, nil</span>
+
+        default:<span class="cov8" title="1">
+                return nil, nil, fmt.Errorf("unsupported algorithm: %s", algorithm)</span>
+        }
+}
+
+// ed25519Signer implements CryptoSigner for Ed25519
+type ed25519Signer struct {
+        privateKey ed25519.PrivateKey
+}
+
+func (s *ed25519Signer) Sign(data []byte) ([]byte, error) <span class="cov8" title="1">{
+        // Ed25519 signs the data directly (no hashing required)
+        signature := ed25519.Sign(s.privateKey, data)
+        return signature, nil
+}</span>
+
+func (*ed25519Signer) Verify(data []byte, signature []byte, publicKey crypto.PublicKey) bool <span class="cov8" title="1">{
+        ed25519PubKey, ok := publicKey.(ed25519.PublicKey)
+        if !ok </span><span class="cov8" title="1">{
+                return false
+        }</span>
+        <span class="cov8" title="1">return ed25519.Verify(ed25519PubKey, data, signature)</span>
+}
+
+func (*ed25519Signer) Algorithm() CryptoAlgorithm <span class="cov8" title="1">{
+        return CryptoEd25519
+}</span>
+
+func (s *ed25519Signer) PublicKey() crypto.PublicKey <span class="cov8" title="1">{
+        return s.privateKey.Public()
+}</span>
+
+func (*ed25519Signer) KeyType() string <span class="cov8" title="1">{
+        return "Ed25519"
+}</span>
+
+// ecdsaP256Signer implements CryptoSigner for ECDSA P-256
+type ecdsaP256Signer struct {
+        privateKey *ecdsa.PrivateKey
+}
+
+// ecdsaSignature represents an ECDSA signature for ASN.1 encoding (FIPS compliance)
+type ecdsaSignature struct {
+        R *big.Int
+        S *big.Int
+}
+
+func (s *ecdsaP256Signer) Sign(data []byte) ([]byte, error) <span class="cov8" title="1">{
+        // ECDSA requires hashing the data first
+        hash := sha256.Sum256(data)
+        r, sig, err := ecdsa.Sign(rand.Reader, s.privateKey, hash[:])
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("ECDSA signing failed: %w", err)
+        }</span>
+
+        // Encode signature using ASN.1 DER format (FIPS standard)
+        <span class="cov8" title="1">signature := ecdsaSignature{R: r, S: sig}
+        signatureBytes, err := asn1.Marshal(signature)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to marshal ECDSA signature: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return signatureBytes, nil</span>
+}
+
+func (*ecdsaP256Signer) Verify(data []byte, signature []byte, publicKey crypto.PublicKey) bool <span class="cov8" title="1">{
+        ecdsaPubKey, ok := publicKey.(*ecdsa.PublicKey)
+        if !ok </span><span class="cov8" title="1">{
+                return false
+        }</span>
+
+        // Decode ASN.1 DER signature
+        <span class="cov8" title="1">var sig ecdsaSignature
+        if _, err := asn1.Unmarshal(signature, &amp;sig); err != nil </span><span class="cov8" title="1">{
+                return false
+        }</span>
+
+        // Hash the data
+        <span class="cov8" title="1">hash := sha256.Sum256(data)
+
+        // Verify signature
+        return ecdsa.Verify(ecdsaPubKey, hash[:], sig.R, sig.S)</span>
+}
+
+func (*ecdsaP256Signer) Algorithm() CryptoAlgorithm <span class="cov8" title="1">{
+        return CryptoECDSAP256
+}</span>
+
+func (s *ecdsaP256Signer) PublicKey() crypto.PublicKey <span class="cov8" title="1">{
+        return &amp;s.privateKey.PublicKey
+}</span>
+
+func (*ecdsaP256Signer) KeyType() string <span class="cov8" title="1">{
+        return "ECDSA P-256"
+}</span>
+
+// DetectAlgorithmFromPublicKey determines the algorithm from a public key
+func DetectAlgorithmFromPublicKey(publicKey crypto.PublicKey) (CryptoAlgorithm, error) <span class="cov8" title="1">{
+        switch publicKey.(type) </span>{
+        case ed25519.PublicKey:<span class="cov8" title="1">
+                return CryptoEd25519, nil</span>
+        case *ecdsa.PublicKey:<span class="cov8" title="1">
+                return CryptoECDSAP256, nil</span>
+        default:<span class="cov8" title="1">
+                return "", fmt.Errorf("unsupported public key type: %T", publicKey)</span>
+        }
+}
+
+// DetectAlgorithmFromPrivateKey determines the algorithm from a private key
+func DetectAlgorithmFromPrivateKey(privateKey crypto.PrivateKey) (CryptoAlgorithm, error) <span class="cov8" title="1">{
+        if privateKey == nil </span><span class="cov8" title="1">{
+                return "", fmt.Errorf("private key is nil")
+        }</span>
+
+        <span class="cov8" title="1">switch key := privateKey.(type) </span>{
+        case ed25519.PrivateKey:<span class="cov8" title="1">
+                return CryptoEd25519, nil</span>
+        case *ecdsa.PrivateKey:<span class="cov8" title="1">
+                if key.Curve == elliptic.P256() </span><span class="cov8" title="1">{
+                        return CryptoECDSAP256, nil
+                }</span>
+                <span class="cov8" title="1">return "", fmt.Errorf("unsupported ECDSA curve: %s", key.Curve.Params().Name)</span>
+        default:<span class="cov8" title="1">
+                return "", fmt.Errorf("unsupported private key type: %T", privateKey)</span>
+        }
+}
+
+// ValidateAlgorithm checks if the algorithm is supported
+func ValidateAlgorithm(algorithm CryptoAlgorithm) error <span class="cov8" title="1">{
+        switch algorithm </span>{
+        case CryptoEd25519, CryptoECDSAP256:<span class="cov8" title="1">
+                return nil</span>
+        default:<span class="cov8" title="1">
+                return fmt.Errorf("unsupported algorithm: %s. Supported algorithms: %s (default, high-performance), %s (FIPS 140-2 compliant)",
+                        algorithm, CryptoEd25519, CryptoECDSAP256)</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">package sctx
+
+import (
+        "context"
+        "fmt"
+
+        "github.com/zoobzio/pipz"
+        "github.com/zoobzio/zlog"
+)
+
+// ContextEvent represents token/context lifecycle events
+type ContextEvent[M any] struct {
+        Context   *Context[M]
+        Token     string
+        Operation string // "generated", "verified", "revoked", "expired"
+}
+
+// CertificateEvent represents certificate validation events
+type CertificateEvent struct {
+        CertificateInfo CertificateInfo
+        Reason          string
+        Error           error
+}
+
+
+// Clone creates a deep copy of ContextEvent for pipz.Cloner interface
+func (e ContextEvent[M]) Clone() ContextEvent[M] <span class="cov8" title="1">{
+        return ContextEvent[M]{
+                Context:   e.Context.Clone(),
+                Token:     e.Token,
+                Operation: e.Operation,
+        }
+}</span>
+
+// Clone creates a deep copy of CertificateEvent for pipz.Cloner interface
+func (e CertificateEvent) Clone() CertificateEvent <span class="cov8" title="1">{
+        cloned := CertificateEvent{
+                Reason: e.Reason,
+                Error:  e.Error,
+        }
+
+        // Deep copy CertificateInfo
+        cloned.CertificateInfo = CertificateInfo{
+                CommonName:   e.CertificateInfo.CommonName,
+                SerialNumber: e.CertificateInfo.SerialNumber,
+                NotBefore:    e.CertificateInfo.NotBefore,
+                NotAfter:     e.CertificateInfo.NotAfter,
+                Issuer:       e.CertificateInfo.Issuer,
+        }
+
+        // Deep copy KeyUsage slice
+        if e.CertificateInfo.KeyUsage != nil </span><span class="cov8" title="1">{
+                cloned.CertificateInfo.KeyUsage = make([]string, len(e.CertificateInfo.KeyUsage))
+                copy(cloned.CertificateInfo.KeyUsage, e.CertificateInfo.KeyUsage)
+        }</span>
+
+        <span class="cov8" title="1">return cloned</span>
+}
+
+// Security audit signals for sctx events.
+// These signals can be routed to audit logs, SIEM systems, or monitoring tools.
+//
+//nolint:revive // Signal constants follow zlog convention of ALL_CAPS
+const (
+        // TOKEN_GENERATED indicates a new token was created from a certificate
+        TOKEN_GENERATED = zlog.Signal("TOKEN_GENERATED")
+
+        // TOKEN_VERIFIED indicates successful token verification
+        TOKEN_VERIFIED = zlog.Signal("TOKEN_VERIFIED")
+
+        // TOKEN_REJECTED indicates failed token verification
+        TOKEN_REJECTED = zlog.Signal("TOKEN_REJECTED")
+
+        // GUARD_CREATED indicates a new guard was created
+        GUARD_CREATED = zlog.Signal("GUARD_CREATED")
+
+        // GUARD_VALIDATED indicates successful guard validation
+        GUARD_VALIDATED = zlog.Signal("GUARD_VALIDATED")
+
+        // GUARD_REJECTED indicates failed guard validation
+        GUARD_REJECTED = zlog.Signal("GUARD_REJECTED")
+
+        // CONTEXT_REVOKED indicates a context was manually revoked
+        CONTEXT_REVOKED = zlog.Signal("CONTEXT_REVOKED")
+
+        // CONTEXT_EXPIRED indicates a context expired naturally
+        CONTEXT_EXPIRED = zlog.Signal("CONTEXT_EXPIRED")
+
+        // CERTIFICATE_REJECTED indicates certificate validation failure
+        CERTIFICATE_REJECTED = zlog.Signal("CERTIFICATE_REJECTED")
+
+        // ADMIN_CHANGED indicates the admin service was changed
+        ADMIN_CHANGED = zlog.Signal("ADMIN_CHANGED")
+)
+
+// Processor names as constants
+const (
+        ProcessorSanitizeContext     = "sanitize-context"
+        ProcessorSanitizeCertificate = "sanitize-certificate"
+)
+
+// certificateSanitizer sanitizes certificate events
+var certificateSanitizer = pipz.Transform[zlog.Event[CertificateEvent]](ProcessorSanitizeCertificate,
+        func(ctx context.Context, event zlog.Event[CertificateEvent]) zlog.Event[CertificateEvent] <span class="cov8" title="1">{
+                sanitized := event.Clone()
+
+                // Keep certificate for debugging but could redact sensitive fields
+                // For now, just ensure error messages don't leak sensitive info
+                if sanitized.Data.Error != nil </span><span class="cov8" title="1">{
+                        sanitized.Data.Error = fmt.Errorf("certificate validation failed")
+                }</span>
+
+                <span class="cov8" title="1">return sanitized</span>
+        })
+
+// getContextSanitizer returns a type-specific context sanitizer
+func getContextSanitizer[M any]() pipz.Chainable[zlog.Event[ContextEvent[M]]] <span class="cov8" title="1">{
+        // Create type-specific sanitizer
+        return pipz.Transform[zlog.Event[ContextEvent[M]]](ProcessorSanitizeContext,
+                func(ctx context.Context, event zlog.Event[ContextEvent[M]]) zlog.Event[ContextEvent[M]] </span><span class="cov8" title="1">{
+                        sanitized := event.Clone()
+
+                        if sanitized.Data.Context != nil </span><span class="cov8" title="1">{
+                                safeCtx := sanitized.Data.Context.Clone()
+                                // Clear metadata - we can't assign nil to generic type
+                                var zeroMetadata M
+                                safeCtx.Metadata = zeroMetadata
+
+                                if len(safeCtx.Permissions) &gt; 5 </span><span class="cov8" title="1">{
+                                        safeCtx.Permissions = append(safeCtx.Permissions[:3],
+                                                fmt.Sprintf("...and %d more", len(safeCtx.Permissions)-3))
+                                }</span>
+
+                                <span class="cov8" title="1">sanitized.Data.Context = safeCtx</span>
+                        }
+
+                        <span class="cov8" title="1">return sanitized</span>
+                })
+}
+
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">package sctx
+
+import (
+        "context"
+        "crypto/rand"
+        "encoding/hex"
+        "fmt"
+        "regexp"
+        "strings"
+        "time"
+)
+
+// ContextGuard is a function that enriches a context in the pipeline
+type ContextGuard[M any] = func(context.Context, *Context[M]) (*Context[M], error)
+
+// Context Enrichment Guards - for building security context from certificates
+
+// RequireCertField ensures a certificate field matches an expected value
+func RequireCertField[M any](field, expected string) ContextGuard[M] <span class="cov8" title="1">{
+        return func(_ context.Context, ctx *Context[M]) (*Context[M], error) </span><span class="cov8" title="1">{
+                actual := extractCertInfoField(ctx.CertificateInfo, field)
+                if actual != expected </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("certificate field %s mismatch: expected %q, got %q", field, expected, actual)
+                }</span>
+                <span class="cov8" title="1">return ctx, nil</span>
+        }
+}
+
+// RequireCertPattern ensures a certificate field matches a regex pattern
+func RequireCertPattern[M any](field, pattern string) ContextGuard[M] <span class="cov8" title="1">{
+        return func(_ context.Context, ctx *Context[M]) (*Context[M], error) </span><span class="cov8" title="1">{
+                // Compile regex pattern
+                re, err := regexp.Compile(pattern)
+                if err != nil </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
+                }</span>
+                
+                <span class="cov8" title="1">actual := extractCertInfoField(ctx.CertificateInfo, field)
+                if !re.MatchString(actual) </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("certificate field %s with value %q does not match pattern %q", field, actual, pattern)
+                }</span>
+                <span class="cov8" title="1">return ctx, nil</span>
+        }
+}
+
+// GrantPermissions adds permissions to the context
+func GrantPermissions[M any](permissions ...string) ContextGuard[M] <span class="cov8" title="1">{
+        return func(_ context.Context, ctx *Context[M]) (*Context[M], error) </span><span class="cov8" title="1">{
+                ctx.Permissions = append(ctx.Permissions, permissions...)
+                return ctx, nil
+        }</span>
+}
+
+// ContextOptions contains optional fields to set on a context
+type ContextOptions struct {
+        Expiry      *time.Duration
+        Permissions []string
+}
+
+// SetContext sets multiple context fields at once for efficiency
+func SetContext[M any](opts ContextOptions) ContextGuard[M] <span class="cov8" title="1">{
+        return func(_ context.Context, ctx *Context[M]) (*Context[M], error) </span><span class="cov8" title="1">{
+                if opts.Expiry != nil </span><span class="cov8" title="1">{
+                        ctx.ExpiresAt = time.Now().Add(*opts.Expiry)
+                }</span>
+                <span class="cov8" title="1">if len(opts.Permissions) &gt; 0 </span><span class="cov8" title="1">{
+                        ctx.Permissions = append(ctx.Permissions, opts.Permissions...)
+                }</span>
+
+                <span class="cov8" title="1">return ctx, nil</span>
+        }
+}
+
+// Helper function to extract certificate info fields
+func extractCertInfoField(certInfo CertificateInfo, field string) string <span class="cov8" title="1">{
+        switch strings.ToUpper(field) </span>{
+        case "CN", "COMMONNAME":<span class="cov8" title="1">
+                return certInfo.CommonName</span>
+        case "ISSUER":<span class="cov8" title="1">
+                return certInfo.Issuer</span>
+        case "SERIAL", "SERIALNUMBER":<span class="cov8" title="1">
+                return certInfo.SerialNumber</span>
+        case "NOTBEFORE":<span class="cov8" title="1">
+                return certInfo.NotBefore.Format(time.RFC3339)</span>
+        case "NOTAFTER":<span class="cov8" title="1">
+                return certInfo.NotAfter.Format(time.RFC3339)</span>
+        case "KEYUSAGE":<span class="cov8" title="1">
+                return strings.Join(certInfo.KeyUsage, ",")</span>
+        default:<span class="cov8" title="1">
+                return ""</span>
+        }
+}
+
+// guardImpl implements the Guard interface
+type guardImpl struct {
+        id                  string
+        requiredPermissions []string
+        validate            func(SignedToken) error
+}
+
+// ID returns the unique identifier for this guard
+func (g *guardImpl) ID() string <span class="cov8" title="1">{
+        return g.id
+}</span>
+
+// Validate checks if the token has the required permissions
+func (g *guardImpl) Validate(token SignedToken) error <span class="cov8" title="1">{
+        return g.validate(token)
+}</span>
+
+// Permissions returns the list of permissions this guard checks
+func (g *guardImpl) Permissions() []string <span class="cov8" title="1">{
+        // Return a copy to prevent modification
+        perms := make([]string, len(g.requiredPermissions))
+        copy(perms, g.requiredPermissions)
+        return perms
+}</span>
+
+// generateGuardID creates a unique identifier for a guard
+func generateGuardID() string <span class="cov8" title="1">{
+        bytes := make([]byte, 16)
+        if _, err := rand.Read(bytes); err != nil </span><span class="cov0" title="0">{
+                panic(fmt.Sprintf("failed to generate guard ID: %v", err))</span>
+        }
+        <span class="cov8" title="1">return hex.EncodeToString(bytes)</span>
+}
+
+// hasPermission checks if a permission exists in the list
+func hasPermission(permissions []string, permission string) bool <span class="cov8" title="1">{
+        for _, p := range permissions </span><span class="cov8" title="1">{
+                if p == permission </span><span class="cov8" title="1">{
+                        return true
+                }</span>
+        }
+        <span class="cov8" title="1">return false</span>
+}
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">package sctx
+
+import (
+        "time"
+
+        "github.com/zoobzio/pipz"
+)
+
+// Processor name constants for introspection and schema validation
+const (
+        // Context manipulation processors
+        ProcessorSetExpiryOneHour     = "set-expiry-1h"
+        ProcessorSetExpiryFiveMinutes = "set-expiry-5m"
+
+        // Permission processors
+        ProcessorGrantRead        = "grant-read"
+        ProcessorGrantWrite       = "grant-write"
+        ProcessorGrantAdmin       = "grant-admin"
+        ProcessorGrantCreateGuard = "grant-create-guard"
+)
+
+// CreateProcessors creates processor instances for a specific metadata type
+func CreateProcessors[M any]() ProcessorSet[M] <span class="cov8" title="1">{
+        return ProcessorSet[M]{
+                // Context manipulation processors
+                SetExpiryOneHour:     pipz.Apply(ProcessorSetExpiryOneHour, SetContext[M](ContextOptions{Expiry: func() *time.Duration </span><span class="cov8" title="1">{ d := time.Hour; return &amp;d }</span>()})),
+                SetExpiryFiveMinutes: pipz.Apply(ProcessorSetExpiryFiveMinutes, SetContext[M](ContextOptions{Expiry: func() *time.Duration <span class="cov8" title="1">{ d := 5 * time.Minute; return &amp;d }</span>()})),
+
+                // Permission processors
+                GrantRead:        pipz.Apply(ProcessorGrantRead, GrantPermissions[M]("read")),
+                GrantWrite:       pipz.Apply(ProcessorGrantWrite, GrantPermissions[M]("write")),
+                GrantAdmin:       pipz.Apply(ProcessorGrantAdmin, GrantPermissions[M]("admin")),
+                GrantCreateGuard: pipz.Apply(ProcessorGrantCreateGuard, GrantPermissions[M]("create-guard")),
+        }
+}
+
+// ProcessorSet holds all the available processors for a specific metadata type
+type ProcessorSet[M any] struct {
+        // Context manipulation processors
+        SetExpiryOneHour     pipz.Chainable[*Context[M]]
+        SetExpiryFiveMinutes pipz.Chainable[*Context[M]]
+
+        // Permission processors
+        GrantRead        pipz.Chainable[*Context[M]]
+        GrantWrite       pipz.Chainable[*Context[M]]
+        GrantAdmin       pipz.Chainable[*Context[M]]
+        GrantCreateGuard pipz.Chainable[*Context[M]]
+}
+</pre>
+		
+		<pre class="file" id="file8" style="display: none">//go:build !prod
+// +build !prod
+
+package sctx
+
+import (
+        "crypto"
+        "crypto/rand"
+        "crypto/ed25519"
+        "crypto/x509"
+        "crypto/x509/pkix"
+        "math/big"
+        "testing"
+        "time"
+)
+
+type TestCertificates struct {
+        RootCA     *x509.Certificate
+        RootCAKey  ed25519.PrivateKey
+        ClientCert *x509.Certificate
+        ClientKey  ed25519.PrivateKey
+        CertPool   *x509.CertPool
+}
+
+func GenerateTestCertificates(t *testing.T) *TestCertificates <span class="cov8" title="1">{
+        t.Helper()
+        // Generate Root CA
+        rootPub, rootKey, err := ed25519.GenerateKey(rand.Reader)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to generate root key: %v", err)
+        }</span>
+
+        <span class="cov8" title="1">rootTemplate := &amp;x509.Certificate{
+                SerialNumber: big.NewInt(1),
+                Subject: pkix.Name{
+                        Organization:  []string{"Test CA"},
+                        Country:       []string{"US"},
+                        Province:      []string{""},
+                        Locality:      []string{""},
+                        StreetAddress: []string{""},
+                        PostalCode:    []string{""},
+                },
+                NotBefore:             time.Now().Add(-24 * time.Hour),
+                NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+                IsCA:                  true,
+                BasicConstraintsValid: true,
+                KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+                ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageAny},
+        }
+
+        rootCertDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, rootPub, rootKey)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to create root certificate: %v", err)
+        }</span>
+
+        <span class="cov8" title="1">rootCert, err := x509.ParseCertificate(rootCertDER)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to parse root certificate: %v", err)
+        }</span>
+
+        // Generate Client Certificate
+        <span class="cov8" title="1">clientPub, clientKey, err := ed25519.GenerateKey(rand.Reader)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to generate client key: %v", err)
+        }</span>
+
+        <span class="cov8" title="1">clientTemplate := &amp;x509.Certificate{
+                SerialNumber: big.NewInt(2),
+                Subject: pkix.Name{
+                        Organization:       []string{"Test Client"},
+                        OrganizationalUnit: []string{"Engineering"},
+                        CommonName:         "test-client",
+                },
+                NotBefore:   time.Now().Add(-24 * time.Hour),
+                NotAfter:    time.Now().Add(90 * 24 * time.Hour),
+                KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+                ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageAny},
+        }
+
+        clientCertDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, rootCert, clientPub, rootKey)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to create client certificate: %v", err)
+        }</span>
+
+        <span class="cov8" title="1">clientCert, err := x509.ParseCertificate(clientCertDER)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to parse client certificate: %v", err)
+        }</span>
+
+        // Create certificate pool with root CA
+        <span class="cov8" title="1">certPool := x509.NewCertPool()
+        certPool.AddCert(rootCert)
+
+        return &amp;TestCertificates{
+                RootCA:     rootCert,
+                RootCAKey:  rootKey,
+                ClientCert: clientCert,
+                ClientKey:  clientKey,
+                CertPool:   certPool,
+        }</span>
+}
+
+// GenerateAdditionalClientCert generates an additional client certificate signed by the provided CA
+func GenerateAdditionalClientCert(t *testing.T, testCerts *TestCertificates, commonName string) (*x509.Certificate, ed25519.PrivateKey) <span class="cov0" title="0">{
+        t.Helper()
+
+        // Generate Client Key
+        clientPub, clientKey, err := ed25519.GenerateKey(rand.Reader)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to generate client key: %v", err)
+        }</span>
+
+        // Create unique serial number
+        <span class="cov0" title="0">serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to generate serial number: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">clientTemplate := &amp;x509.Certificate{
+                SerialNumber: serialNumber,
+                Subject: pkix.Name{
+                        Organization:       []string{"Test Client"},
+                        OrganizationalUnit: []string{"Engineering"},
+                        CommonName:         commonName,
+                },
+                NotBefore:   time.Now().Add(-24 * time.Hour),
+                NotAfter:    time.Now().Add(90 * 24 * time.Hour),
+                KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+                ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageAny},
+        }
+
+        clientCertDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, testCerts.RootCA, clientPub, testCerts.RootCAKey)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to create client certificate: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">clientCert, err := x509.ParseCertificate(clientCertDER)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to parse client certificate: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">return clientCert, clientKey</span>
+}
+
+// createTestAssertion is a test helper to create assertions
+func createTestAssertion(t *testing.T, privateKey crypto.PrivateKey, cert *x509.Certificate) SignedAssertion <span class="cov8" title="1">{
+        assertion, err := CreateAssertion(privateKey, cert)
+        if err != nil </span><span class="cov0" title="0">{
+                t.Fatalf("Failed to create assertion: %v", err)
+        }</span>
+        <span class="cov8" title="1">return assertion</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

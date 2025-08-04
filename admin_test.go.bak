@@ -1,0 +1,574 @@
+package sctx
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestNewAdminService(t *testing.T) {
+	// Generate Ed25519 key pair - signature is (PublicKey, PrivateKey, error)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	caPool := x509.NewCertPool()
+
+	admin, err := NewAdminService[any](privateKey, caPool)
+	if err != nil {
+		t.Fatalf("Failed to create admin service: %v", err)
+	}
+
+	if admin == nil {
+		t.Fatal("Admin service is nil")
+	}
+
+	if admin.PublicKey() == nil {
+		t.Error("Public key is nil")
+	}
+}
+
+func TestSCTXPrimitiveFlow(t *testing.T) {
+	// Generate test certificates
+	testCerts := GenerateTestCertificates(t)
+
+	// Create admin service
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+	if err != nil {
+		t.Fatalf("Failed to create admin service: %v", err)
+	}
+
+	// Configure a basic context pipeline with expiry
+	err = admin.LoadSchema(`
+type: sequence
+children:
+  - ref: set-expiry-1h
+`)
+	if err != nil {
+		t.Fatalf("Failed to load schema: %v", err)
+	}
+
+	// Generate secure context from certificate
+	token, err := admin.Generate(testCerts.ClientCert)
+	if err != nil {
+		t.Fatalf("Failed to generate secure context: %v", err)
+	}
+
+	// Verify the token was created
+	if token == "" {
+		t.Fatal("Generated token is empty")
+	}
+}
+
+func TestCertificateValidationErrors(t *testing.T) {
+	testCerts := GenerateTestCertificates(t)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	t.Run("untrusted certificate", func(t *testing.T) {
+		// Create admin with empty CA pool
+		emptyPool := x509.NewCertPool()
+		admin, err := NewAdminService[any](privateKey, emptyPool)
+		if err != nil {
+			t.Fatalf("Failed to create admin service: %v", err)
+		}
+
+		// Configure pipeline
+		err = admin.LoadSchema(`
+type: sequence
+children:
+  - ref: set-expiry-1h
+`)
+		if err != nil {
+			t.Fatalf("Failed to load schema: %v", err)
+		}
+
+		// Try to generate with untrusted certificate
+		_, err = admin.Generate(testCerts.ClientCert)
+		if err == nil {
+			t.Error("Expected error with untrusted certificate, got nil")
+		}
+	})
+
+	t.Run("nil certificate", func(t *testing.T) {
+		admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+		if err != nil {
+			t.Fatalf("Failed to create admin service: %v", err)
+		}
+
+		_, err = admin.Generate(nil)
+		if err == nil {
+			t.Error("Expected error with nil certificate, got nil")
+		}
+	})
+
+	t.Run("no pipeline configured", func(t *testing.T) {
+		admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+		if err != nil {
+			t.Fatalf("Failed to create admin service: %v", err)
+		}
+
+		// Don't configure pipeline - expect error
+		_, err = admin.Generate(testCerts.ClientCert)
+		if err == nil {
+			t.Error("Expected error with no pipeline configured, got nil")
+		}
+		if !strings.Contains(err.Error(), "no pipeline configured") {
+			t.Errorf("Expected error about no pipeline configured, got: %v", err)
+		}
+	})
+}
+
+func TestContextPipeline(t *testing.T) {
+	testCerts := GenerateTestCertificates(t)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+	if err != nil {
+		t.Fatalf("Failed to create admin service: %v", err)
+	}
+
+	t.Run("multiple guards in pipeline", func(t *testing.T) {
+		expiry := time.Hour
+		issuer := "test-issuer"
+
+		admin.ConfigureContextPipeline(
+			// First guard: set expiry
+			SetContext[any](ContextOptions{
+				Expiry: &expiry,
+			}),
+			// Second guard: add permissions
+			GrantPermissions[any]("read", "write"),
+			// Third guard: set issuer
+			SetContext[any](ContextOptions{
+				Issuer: &issuer,
+			}),
+			// Fourth guard: add more permissions
+			GrantPermissions[any]("admin"),
+		)
+
+		_, err := admin.Generate(testCerts.ClientCert)
+		if err != nil {
+			t.Fatalf("Failed to generate token: %v", err)
+		}
+
+		// Get context from cache to verify
+		fingerprint := getFingerprint(testCerts.ClientCert)
+		ctx, exists := admin.cache.Get(fingerprint)
+		if !exists {
+			t.Fatal("Context should exist in cache")
+		}
+
+		// Verify all guards were applied
+		if ctx.Issuer != issuer {
+			t.Errorf("Issuer not set correctly, got %q want %q", ctx.Issuer, issuer)
+		}
+
+		expectedPerms := []string{"read", "write", "admin"}
+		if len(ctx.Permissions) != len(expectedPerms) {
+			t.Errorf("Permission count mismatch, got %d want %d", len(ctx.Permissions), len(expectedPerms))
+		}
+
+		for _, perm := range expectedPerms {
+			if !ctx.HasPermission(perm) {
+				t.Errorf("Missing permission %q", perm)
+			}
+		}
+	})
+
+	t.Run("certificate field validation", func(t *testing.T) {
+		expiry := time.Hour
+
+		// Test with matching field
+		admin.ConfigureContextPipeline(
+			SetContext[any](ContextOptions{
+				Expiry: &expiry,
+			}),
+			RequireCertField[any]("CN", "test-client"),
+		)
+
+		_, err := admin.Generate(testCerts.ClientCert)
+		if err != nil {
+			t.Errorf("Expected success with matching CN, got error: %v", err)
+		}
+
+		// Clear cache to force re-evaluation
+		fingerprint := getFingerprint(testCerts.ClientCert)
+		_ = admin.cache.Delete(fingerprint)
+
+		// Test with non-matching field
+		admin.ConfigureContextPipeline(
+			SetContext[any](ContextOptions{
+				Expiry: &expiry,
+			}),
+			RequireCertField[any]("CN", "wrong-name"),
+		)
+
+		_, err = admin.Generate(testCerts.ClientCert)
+		if err == nil {
+			t.Error("Expected error with non-matching CN, got nil")
+		}
+	})
+
+	t.Run("certificate pattern validation", func(t *testing.T) {
+		expiry := time.Hour
+
+		// Test with matching pattern
+		admin.ConfigureContextPipeline(
+			SetContext[any](ContextOptions{
+				Expiry: &expiry,
+			}),
+			RequireCertPattern[any]("O", "Test"),
+		)
+
+		_, err := admin.Generate(testCerts.ClientCert)
+		if err != nil {
+			t.Errorf("Expected success with matching pattern, got error: %v", err)
+		}
+
+		// Clear cache to force re-evaluation
+		_ = admin.cache.Delete(getFingerprint(testCerts.ClientCert))
+
+		// Test with non-matching pattern
+		admin.ConfigureContextPipeline(
+			SetContext[any](ContextOptions{
+				Expiry: &expiry,
+			}),
+			RequireCertPattern[any]("O", "Production"),
+		)
+
+		_, err = admin.Generate(testCerts.ClientCert)
+		if err == nil {
+			t.Error("Expected error with non-matching pattern, got nil")
+		}
+	})
+
+	t.Run("guard returning error", func(t *testing.T) {
+		expiry := time.Hour
+
+		// Add a guard that always returns an error
+		errorGuard := func(_ context.Context, _ *Context[any]) (*Context[any], error) {
+			return nil, errors.New("guard rejected")
+		}
+
+		admin.ConfigureContextPipeline(
+			SetContext[any](ContextOptions{
+				Expiry: &expiry,
+			}),
+			errorGuard,
+		)
+
+		_, err := admin.Generate(testCerts.ClientCert)
+		if err == nil {
+			t.Fatal("Expected error from guard, got nil")
+		}
+		if !strings.Contains(err.Error(), "guard rejected") {
+			t.Errorf("Expected error to contain 'guard rejected', got: %v", err)
+		}
+	})
+}
+
+func TestMultipleAlgorithms(t *testing.T) {
+	testCerts := GenerateTestCertificates(t)
+
+	t.Run("Ed25519 admin", func(t *testing.T) {
+		_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("Failed to generate key: %v", err)
+		}
+
+		admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+		if err != nil {
+			t.Fatalf("Failed to create admin service: %v", err)
+		}
+
+		expiry := time.Hour
+		admin.ConfigureContextPipeline(
+			SetContext[any](ContextOptions{
+				Expiry: &expiry,
+			}),
+		)
+
+		token, err := admin.Generate(testCerts.ClientCert)
+		if err != nil {
+			t.Fatalf("Failed to generate token: %v", err)
+		}
+
+		if token == "" {
+			t.Error("Token should not be empty")
+		}
+	})
+
+	t.Run("ECDSA admin", func(t *testing.T) {
+		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("Failed to generate key: %v", err)
+		}
+
+		admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+		if err != nil {
+			t.Fatalf("Failed to create admin service: %v", err)
+		}
+
+		expiry := time.Hour
+		admin.ConfigureContextPipeline(
+			SetContext[any](ContextOptions{
+				Expiry: &expiry,
+			}),
+		)
+
+		token, err := admin.Generate(testCerts.ClientCert)
+		if err != nil {
+			t.Fatalf("Failed to generate token: %v", err)
+		}
+
+		if token == "" {
+			t.Error("Token should not be empty")
+		}
+	})
+}
+
+func TestAdminService_UtilityMethods(t *testing.T) {
+	testCerts := GenerateTestCertificates(t)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+	if err != nil {
+		t.Fatalf("Failed to create admin service: %v", err)
+	}
+
+	t.Run("Algorithm", func(t *testing.T) {
+		algo := admin.Algorithm()
+		if algo != CryptoEd25519 {
+			t.Errorf("Expected %v, got %v", CryptoEd25519, algo)
+		}
+	})
+
+	t.Run("ActiveCount", func(t *testing.T) {
+		// Initially should be 0
+		count := admin.ActiveCount()
+		if count != 0 {
+			t.Errorf("Expected 0 active contexts, got %d", count)
+		}
+
+		// Generate a context
+		expiry := time.Hour
+		admin.ConfigureContextPipeline(
+			SetContext[any](ContextOptions{
+				Expiry: &expiry,
+			}),
+		)
+
+		_, err := admin.Generate(testCerts.ClientCert)
+		if err != nil {
+			t.Fatalf("Failed to generate token: %v", err)
+		}
+
+		// Should be 1 now
+		count = admin.ActiveCount()
+		if count != 1 {
+			t.Errorf("Expected 1 active context, got %d", count)
+		}
+	})
+
+	t.Run("GetContext", func(t *testing.T) {
+		fingerprint := getFingerprint(testCerts.ClientCert)
+
+		// Should exist from previous test
+		ctx, exists := admin.GetContext(fingerprint)
+		if !exists {
+			t.Error("Context should exist")
+		}
+		if ctx == nil {
+			t.Fatal("Context should not be nil")
+		}
+		if ctx.CertificateFingerprint != fingerprint {
+			t.Error("Fingerprint mismatch")
+		}
+
+		// Non-existent context
+		_, exists = admin.GetContext("non-existent")
+		if exists {
+			t.Error("Non-existent context should not exist")
+		}
+	})
+
+	t.Run("RevokeByFingerprint", func(t *testing.T) {
+		fingerprint := getFingerprint(testCerts.ClientCert)
+
+		// Revoke existing context
+		err := admin.RevokeByFingerprint(fingerprint)
+		if err != nil {
+			t.Errorf("Failed to revoke context: %v", err)
+		}
+
+		// Verify it's gone
+		_, exists := admin.GetContext(fingerprint)
+		if exists {
+			t.Error("Context should not exist after revocation")
+		}
+
+		// Revoke non-existent should not error
+		err = admin.RevokeByFingerprint("non-existent")
+		if err != nil {
+			t.Errorf("Revoking non-existent should not error, got %v", err)
+		}
+	})
+}
+
+func TestAdminService_RegisterGuard(t *testing.T) {
+	testCerts := GenerateTestCertificates(t)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+	if err != nil {
+		t.Fatalf("Failed to create admin service: %v", err)
+	}
+
+	// Register a guard
+	guardFunc := RequireCertField[any]("CN", "test.example.com")
+	admin.RegisterGuard("require-cn", guardFunc)
+
+	// Verify it was registered by checking the guards map exists
+	// (We can't directly access private fields, so we'll test indirectly through LoadConfig)
+	config := &Config{
+		ContextPipeline: PipelineConfig{
+			Guards: []string{"require-cn"},
+		},
+	}
+
+	err = admin.LoadConfig(config)
+	if err != nil {
+		t.Errorf("Expected LoadConfig to succeed with registered guard, got %v", err)
+	}
+}
+
+func TestAdminService_SetCache(t *testing.T) {
+	testCerts := GenerateTestCertificates(t)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+	if err != nil {
+		t.Fatalf("Failed to create admin service: %v", err)
+	}
+
+	// Create a custom cache
+	customCache := newMemoryContextCache[any](time.Minute)
+
+	// Set the custom cache
+	admin.SetCache(customCache)
+
+	// Verify it works by generating a token
+	expiry := time.Hour
+	admin.ConfigureContextPipeline(
+		SetContext[any](ContextOptions{
+			Expiry: &expiry,
+		}),
+	)
+
+	token, err := admin.Generate(testCerts.ClientCert)
+	if err != nil {
+		t.Fatalf("Failed to generate token: %v", err)
+	}
+
+	if token == "" {
+		t.Error("Token should not be empty")
+	}
+}
+
+func TestAdminService_LoadConfig(t *testing.T) {
+	testCerts := GenerateTestCertificates(t)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+	if err != nil {
+		t.Fatalf("Failed to create admin service: %v", err)
+	}
+
+	// Register guards that the config will reference
+	admin.RegisterGuard("set-expiry", SetContext[any](ContextOptions{
+		Expiry: func() *time.Duration { d := time.Hour; return &d }(),
+	}))
+	admin.RegisterGuard("grant-read", GrantPermissions[any]("read"))
+
+	t.Run("valid config", func(t *testing.T) {
+		config := &Config{
+			ContextPipeline: PipelineConfig{
+				Guards: []string{"set-expiry", "grant-read"},
+			},
+		}
+
+		err := admin.LoadConfig(config)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+
+		// Verify pipeline works
+		token, err := admin.Generate(testCerts.ClientCert)
+		if err != nil {
+			t.Errorf("Expected token generation to succeed, got %v", err)
+		}
+		if token == "" {
+			t.Error("Token should not be empty")
+		}
+	})
+
+	t.Run("unknown guard", func(t *testing.T) {
+		config := &Config{
+			ContextPipeline: PipelineConfig{
+				Guards: []string{"unknown-guard"},
+			},
+		}
+
+		err := admin.LoadConfig(config)
+		if err == nil {
+			t.Error("Expected error for unknown guard")
+		}
+		if err.Error() != `unknown guard: unknown-guard` {
+			t.Errorf("Expected 'unknown guard: unknown-guard', got %v", err)
+		}
+	})
+
+	t.Run("empty guards", func(t *testing.T) {
+		config := &Config{
+			ContextPipeline: PipelineConfig{
+				Guards: []string{},
+			},
+		}
+
+		err := admin.LoadConfig(config)
+		if err != nil {
+			t.Errorf("Expected no error for empty guards, got %v", err)
+		}
+	})
+}

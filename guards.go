@@ -2,8 +2,10 @@ package sctx
 
 import (
 	"context"
-	"crypto/x509"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -16,7 +18,7 @@ type ContextGuard[M any] = func(context.Context, *Context[M]) (*Context[M], erro
 // RequireCertField ensures a certificate field matches an expected value
 func RequireCertField[M any](field, expected string) ContextGuard[M] {
 	return func(_ context.Context, ctx *Context[M]) (*Context[M], error) {
-		actual := extractCertField(ctx.Certificate, field)
+		actual := extractCertInfoField(ctx.CertificateInfo, field)
 		if actual != expected {
 			return nil, fmt.Errorf("certificate field %s mismatch: expected %q, got %q", field, expected, actual)
 		}
@@ -24,14 +26,18 @@ func RequireCertField[M any](field, expected string) ContextGuard[M] {
 	}
 }
 
-// RequireCertPattern ensures a certificate field matches a pattern
+// RequireCertPattern ensures a certificate field matches a regex pattern
 func RequireCertPattern[M any](field, pattern string) ContextGuard[M] {
 	return func(_ context.Context, ctx *Context[M]) (*Context[M], error) {
-		// TODO: Implement regex matching
-		// For now, just check contains
-		actual := extractCertField(ctx.Certificate, field)
-		if !strings.Contains(actual, pattern) {
-			return nil, fmt.Errorf("certificate field %s does not match pattern %q", field, pattern)
+		// Compile regex pattern
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
+		}
+
+		actual := extractCertInfoField(ctx.CertificateInfo, field)
+		if !re.MatchString(actual) {
+			return nil, fmt.Errorf("certificate field %s with value %q does not match pattern %q", field, actual, pattern)
 		}
 		return ctx, nil
 	}
@@ -48,7 +54,6 @@ func GrantPermissions[M any](permissions ...string) ContextGuard[M] {
 // ContextOptions contains optional fields to set on a context
 type ContextOptions struct {
 	Expiry      *time.Duration
-	Issuer      *string
 	Permissions []string
 }
 
@@ -58,50 +63,74 @@ func SetContext[M any](opts ContextOptions) ContextGuard[M] {
 		if opts.Expiry != nil {
 			ctx.ExpiresAt = time.Now().Add(*opts.Expiry)
 		}
-		if opts.Issuer != nil {
-			ctx.Issuer = *opts.Issuer
-		}
 		if len(opts.Permissions) > 0 {
 			ctx.Permissions = append(ctx.Permissions, opts.Permissions...)
 		}
-		
+
 		return ctx, nil
 	}
 }
 
-// Helper function to extract certificate fields
-func extractCertField(cert *x509.Certificate, field string) string {
-	if cert == nil {
+// Helper function to extract certificate info fields
+func extractCertInfoField(certInfo CertificateInfo, field string) string {
+	switch strings.ToUpper(field) {
+	case "CN", "COMMONNAME":
+		return certInfo.CommonName
+	case "ISSUER":
+		return certInfo.Issuer
+	case "SERIAL", "SERIALNUMBER":
+		return certInfo.SerialNumber
+	case "NOTBEFORE":
+		return certInfo.NotBefore.Format(time.RFC3339)
+	case "NOTAFTER":
+		return certInfo.NotAfter.Format(time.RFC3339)
+	case "KEYUSAGE":
+		return strings.Join(certInfo.KeyUsage, ",")
+	default:
 		return ""
 	}
-	
-	switch strings.ToUpper(field) {
-	case "CN":
-		return cert.Subject.CommonName
-	case "O":
-		if len(cert.Subject.Organization) > 0 {
-			return cert.Subject.Organization[0]
-		}
-	case "OU":
-		if len(cert.Subject.OrganizationalUnit) > 0 {
-			return cert.Subject.OrganizationalUnit[0]
-		}
-	case "C":
-		if len(cert.Subject.Country) > 0 {
-			return cert.Subject.Country[0]
-		}
-	case "L":
-		if len(cert.Subject.Locality) > 0 {
-			return cert.Subject.Locality[0]
-		}
-	case "ST":
-		if len(cert.Subject.Province) > 0 {
-			return cert.Subject.Province[0]
-		}
-	case "EMAIL":
-		if len(cert.EmailAddresses) > 0 {
-			return cert.EmailAddresses[0]
+}
+
+// guardImpl implements the Guard interface
+type guardImpl struct {
+	id                  string
+	requiredPermissions []string
+	validate            func(SignedToken) error
+}
+
+// ID returns the unique identifier for this guard
+func (g *guardImpl) ID() string {
+	return g.id
+}
+
+// Validate checks if the token has the required permissions
+func (g *guardImpl) Validate(token SignedToken) error {
+	return g.validate(token)
+}
+
+// Permissions returns the list of permissions this guard checks
+func (g *guardImpl) Permissions() []string {
+	// Return a copy to prevent modification
+	perms := make([]string, len(g.requiredPermissions))
+	copy(perms, g.requiredPermissions)
+	return perms
+}
+
+// generateGuardID creates a unique identifier for a guard
+func generateGuardID() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		panic(fmt.Sprintf("failed to generate guard ID: %v", err))
+	}
+	return hex.EncodeToString(bytes)
+}
+
+// hasPermission checks if a permission exists in the list
+func hasPermission(permissions []string, permission string) bool {
+	for _, p := range permissions {
+		if p == permission {
+			return true
 		}
 	}
-	return ""
+	return false
 }

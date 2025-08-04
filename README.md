@@ -72,3 +72,6 @@ if err != nil {
 - **Zero shared secrets**: Only public keys needed for validation
 - **Revocable**: Guards become invalid when parent tokens expire/revoke
 - **Auditable**: All guard creation tracked by admin service
+- **Extensible**: Register custom processors to add validation logic
+
+See [examples/custom_processors.md](examples/custom_processors.md) for extending with custom processors.

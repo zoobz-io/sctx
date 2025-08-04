@@ -77,18 +77,18 @@ func NewCryptoSigner(algorithm CryptoAlgorithm, privateKey crypto.PrivateKey) (C
 }
 
 // GenerateKeyPair generates a key pair for the specified algorithm
-func GenerateKeyPair(algorithm CryptoAlgorithm) (crypto.PrivateKey, crypto.PublicKey, error) {
+func GenerateKeyPair(algorithm CryptoAlgorithm) (crypto.PublicKey, crypto.PrivateKey, error) {
 	switch algorithm {
 	case CryptoEd25519:
 		publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-		return privateKey, publicKey, err
+		return publicKey, privateKey, err
 
 	case CryptoECDSAP256:
 		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			return nil, nil, err
 		}
-		return privateKey, &privateKey.PublicKey, nil
+		return &privateKey.PublicKey, privateKey, nil
 
 	default:
 		return nil, nil, fmt.Errorf("unsupported algorithm: %s", algorithm)
@@ -106,7 +106,7 @@ func (s *ed25519Signer) Sign(data []byte) ([]byte, error) {
 	return signature, nil
 }
 
-func (s *ed25519Signer) Verify(data []byte, signature []byte, publicKey crypto.PublicKey) bool {
+func (*ed25519Signer) Verify(data []byte, signature []byte, publicKey crypto.PublicKey) bool {
 	ed25519PubKey, ok := publicKey.(ed25519.PublicKey)
 	if !ok {
 		return false
@@ -114,7 +114,7 @@ func (s *ed25519Signer) Verify(data []byte, signature []byte, publicKey crypto.P
 	return ed25519.Verify(ed25519PubKey, data, signature)
 }
 
-func (s *ed25519Signer) Algorithm() CryptoAlgorithm {
+func (*ed25519Signer) Algorithm() CryptoAlgorithm {
 	return CryptoEd25519
 }
 
@@ -122,7 +122,7 @@ func (s *ed25519Signer) PublicKey() crypto.PublicKey {
 	return s.privateKey.Public()
 }
 
-func (s *ed25519Signer) KeyType() string {
+func (*ed25519Signer) KeyType() string {
 	return "Ed25519"
 }
 
@@ -155,7 +155,7 @@ func (s *ecdsaP256Signer) Sign(data []byte) ([]byte, error) {
 	return signatureBytes, nil
 }
 
-func (s *ecdsaP256Signer) Verify(data []byte, signature []byte, publicKey crypto.PublicKey) bool {
+func (*ecdsaP256Signer) Verify(data []byte, signature []byte, publicKey crypto.PublicKey) bool {
 	ecdsaPubKey, ok := publicKey.(*ecdsa.PublicKey)
 	if !ok {
 		return false
@@ -174,7 +174,7 @@ func (s *ecdsaP256Signer) Verify(data []byte, signature []byte, publicKey crypto
 	return ecdsa.Verify(ecdsaPubKey, hash[:], sig.R, sig.S)
 }
 
-func (s *ecdsaP256Signer) Algorithm() CryptoAlgorithm {
+func (*ecdsaP256Signer) Algorithm() CryptoAlgorithm {
 	return CryptoECDSAP256
 }
 
@@ -182,17 +182,24 @@ func (s *ecdsaP256Signer) PublicKey() crypto.PublicKey {
 	return &s.privateKey.PublicKey
 }
 
-func (s *ecdsaP256Signer) KeyType() string {
+func (*ecdsaP256Signer) KeyType() string {
 	return "ECDSA P-256"
 }
 
 // DetectAlgorithmFromPublicKey determines the algorithm from a public key
 func DetectAlgorithmFromPublicKey(publicKey crypto.PublicKey) (CryptoAlgorithm, error) {
-	switch publicKey.(type) {
+	if publicKey == nil {
+		return "", fmt.Errorf("public key is nil")
+	}
+
+	switch key := publicKey.(type) {
 	case ed25519.PublicKey:
 		return CryptoEd25519, nil
 	case *ecdsa.PublicKey:
-		return CryptoECDSAP256, nil
+		if key.Curve == elliptic.P256() {
+			return CryptoECDSAP256, nil
+		}
+		return "", fmt.Errorf("unsupported ECDSA curve: %s", key.Curve.Params().Name)
 	default:
 		return "", fmt.Errorf("unsupported public key type: %T", publicKey)
 	}
@@ -200,11 +207,18 @@ func DetectAlgorithmFromPublicKey(publicKey crypto.PublicKey) (CryptoAlgorithm, 
 
 // DetectAlgorithmFromPrivateKey determines the algorithm from a private key
 func DetectAlgorithmFromPrivateKey(privateKey crypto.PrivateKey) (CryptoAlgorithm, error) {
-	switch privateKey.(type) {
+	if privateKey == nil {
+		return "", fmt.Errorf("private key is nil")
+	}
+
+	switch key := privateKey.(type) {
 	case ed25519.PrivateKey:
 		return CryptoEd25519, nil
 	case *ecdsa.PrivateKey:
-		return CryptoECDSAP256, nil
+		if key.Curve == elliptic.P256() {
+			return CryptoECDSAP256, nil
+		}
+		return "", fmt.Errorf("unsupported ECDSA curve: %s", key.Curve.Params().Name)
 	default:
 		return "", fmt.Errorf("unsupported private key type: %T", privateKey)
 	}

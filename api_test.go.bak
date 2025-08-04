@@ -1,0 +1,340 @@
+package sctx
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+)
+
+// mockAdmin implements the Admin interface for testing
+type mockAdmin struct {
+	generateCalled    int
+	createGuardCalled int
+	loadSchemaCalled  int
+	generateErr       error
+	createGuardErr    error
+	loadSchemaErr     error
+}
+
+func (m *mockAdmin) Generate(_ *x509.Certificate) (SignedToken, error) {
+	m.generateCalled++
+	if m.generateErr != nil {
+		return "", m.generateErr
+	}
+	return "mock-token", nil
+}
+
+func (m *mockAdmin) CreateGuard(_ SignedToken, permissions ...string) (Guard, error) {
+	m.createGuardCalled++
+	if m.createGuardErr != nil {
+		return nil, m.createGuardErr
+	}
+	return &mockGuard{permissions: permissions}, nil
+}
+
+func (m *mockAdmin) LoadSchema(_ string) error {
+	m.loadSchemaCalled++
+	return m.loadSchemaErr
+}
+
+// mockGuard implements the Guard interface for testing
+type mockGuard struct {
+	permissions []string
+}
+
+func (*mockGuard) Validate(_ SignedToken) error {
+	return nil
+}
+
+func (*mockGuard) ID() string {
+	return "mock-guard-id"
+}
+
+func (mg *mockGuard) Permissions() []string {
+	return mg.permissions
+}
+
+func TestSetAdmin(t *testing.T) {
+	// Reset global state
+	globalAdmin.Store(nil)
+	defer globalAdmin.Store(nil)
+
+	t.Run("set valid admin", func(t *testing.T) {
+		admin := &mockAdmin{}
+		err := SetAdmin(admin)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+
+		// Verify it was set
+		stored := globalAdmin.Load()
+		if stored == nil {
+			t.Error("Admin should be stored")
+		}
+	})
+
+	t.Run("set nil admin", func(t *testing.T) {
+		err := SetAdmin(nil)
+		if err == nil {
+			t.Error("Expected error when setting nil admin")
+		}
+		if err.Error() != "admin cannot be nil" {
+			t.Errorf("Expected 'admin cannot be nil', got %v", err)
+		}
+	})
+
+	t.Run("replace existing admin", func(t *testing.T) {
+		admin1 := &mockAdmin{}
+		admin2 := &mockAdmin{}
+
+		err := SetAdmin(admin1)
+		if err != nil {
+			t.Fatalf("Failed to set first admin: %v", err)
+		}
+
+		err = SetAdmin(admin2)
+		if err != nil {
+			t.Errorf("Expected no error replacing admin, got %v", err)
+		}
+	})
+}
+
+func TestGenerate_API(t *testing.T) {
+	// Reset global state
+	globalAdmin.Store(nil)
+	defer globalAdmin.Store(nil)
+
+	// Create test certificate
+	testCerts := GenerateTestCertificates(t)
+
+	t.Run("no admin configured", func(t *testing.T) {
+		_, err := Generate(testCerts.ClientCert)
+		if err == nil {
+			t.Error("Expected error when no admin configured")
+		}
+		if err.Error() != "no admin service configured" {
+			t.Errorf("Expected 'no admin service configured', got %v", err)
+		}
+	})
+
+	t.Run("with admin configured", func(t *testing.T) {
+		admin := &mockAdmin{}
+		err := SetAdmin(admin)
+		if err != nil {
+			t.Fatalf("Failed to set admin: %v", err)
+		}
+
+		token, err := Generate(testCerts.ClientCert)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if token != "mock-token" {
+			t.Errorf("Expected 'mock-token', got %v", token)
+		}
+		if admin.generateCalled != 1 {
+			t.Errorf("Expected Generate to be called once, called %d times", admin.generateCalled)
+		}
+	})
+
+	t.Run("admin returns error", func(t *testing.T) {
+		admin := &mockAdmin{generateErr: ErrInvalidContext}
+		err := SetAdmin(admin)
+		if err != nil {
+			t.Fatalf("Failed to set admin: %v", err)
+		}
+
+		_, err = Generate(testCerts.ClientCert)
+		if !errors.Is(err, ErrInvalidContext) {
+			t.Errorf("Expected ErrInvalidContext, got %v", err)
+		}
+	})
+}
+
+func TestCreateGuard_API(t *testing.T) {
+	// Reset global state
+	globalAdmin.Store(nil)
+	defer globalAdmin.Store(nil)
+
+	t.Run("no admin configured", func(t *testing.T) {
+		_, err := CreateGuard("test-token", "read", "write")
+		if err == nil {
+			t.Error("Expected error when no admin configured")
+		}
+		if err.Error() != "no admin service configured" {
+			t.Errorf("Expected 'no admin service configured', got %v", err)
+		}
+	})
+
+	t.Run("with admin configured", func(t *testing.T) {
+		admin := &mockAdmin{}
+		err := SetAdmin(admin)
+		if err != nil {
+			t.Fatalf("Failed to set admin: %v", err)
+		}
+
+		guard, err := CreateGuard("test-token", "read", "write")
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if guard == nil {
+			t.Error("Expected guard, got nil")
+		}
+		if admin.createGuardCalled != 1 {
+			t.Errorf("Expected CreateGuard to be called once, called %d times", admin.createGuardCalled)
+		}
+
+		// Verify permissions were passed through
+		perms := guard.Permissions()
+		if len(perms) != 2 || perms[0] != "read" || perms[1] != "write" {
+			t.Errorf("Expected permissions [read, write], got %v", perms)
+		}
+	})
+
+	t.Run("admin returns error", func(t *testing.T) {
+		admin := &mockAdmin{createGuardErr: ErrInvalidSignature}
+		err := SetAdmin(admin)
+		if err != nil {
+			t.Fatalf("Failed to set admin: %v", err)
+		}
+
+		_, err = CreateGuard("test-token", "read")
+		if !errors.Is(err, ErrInvalidSignature) {
+			t.Errorf("Expected ErrInvalidSignature, got %v", err)
+		}
+	})
+}
+
+func TestLoadSchema_API(t *testing.T) {
+	// Reset global state
+	globalAdmin.Store(nil)
+	defer globalAdmin.Store(nil)
+
+	schema := `
+type: sequence
+children:
+  - ref: set-expiry-1h
+`
+
+	t.Run("no admin configured", func(t *testing.T) {
+		err := LoadSchema(schema)
+		if err == nil {
+			t.Error("Expected error when no admin configured")
+		}
+		if err.Error() != "no admin service configured" {
+			t.Errorf("Expected 'no admin service configured', got %v", err)
+		}
+	})
+
+	t.Run("with admin configured", func(t *testing.T) {
+		admin := &mockAdmin{}
+		err := SetAdmin(admin)
+		if err != nil {
+			t.Fatalf("Failed to set admin: %v", err)
+		}
+
+		err = LoadSchema(schema)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if admin.loadSchemaCalled != 1 {
+			t.Errorf("Expected LoadSchema to be called once, called %d times", admin.loadSchemaCalled)
+		}
+	})
+
+	t.Run("admin returns error", func(t *testing.T) {
+		admin := &mockAdmin{loadSchemaErr: ErrInvalidKey}
+		err := SetAdmin(admin)
+		if err != nil {
+			t.Fatalf("Failed to set admin: %v", err)
+		}
+
+		err = LoadSchema(schema)
+		if !errors.Is(err, ErrInvalidKey) {
+			t.Errorf("Expected ErrInvalidKey, got %v", err)
+		}
+	})
+}
+
+func TestAPI_ConcurrentAccess(t *testing.T) {
+	// Reset global state
+	globalAdmin.Store(nil)
+	defer globalAdmin.Store(nil)
+
+	// Create real admin service
+	testCerts := GenerateTestCertificates(t)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
+	if err != nil {
+		t.Fatalf("Failed to create admin service: %v", err)
+	}
+
+	// Configure pipeline
+	expiry := time.Hour
+	admin.ConfigureContextPipeline(
+		SetContext[any](ContextOptions{
+			Expiry:      &expiry,
+			Permissions: []string{"read", "write", "create-guard"},
+		}),
+	)
+
+	// Set global admin
+	err = SetAdmin(admin)
+	if err != nil {
+		t.Fatalf("Failed to set admin: %v", err)
+	}
+
+	// Run concurrent operations
+	var wg sync.WaitGroup
+	errors := make([]error, 100)
+
+	// Concurrent Generate calls
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			_, err := Generate(testCerts.ClientCert)
+			errors[idx] = err
+		}(i)
+	}
+
+	// Concurrent CreateGuard calls
+	token, err := admin.Generate(testCerts.ClientCert)
+	if err != nil {
+		t.Fatalf("Failed to generate token: %v", err)
+	}
+
+	for i := 50; i < 100; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			_, err := CreateGuard(token, "read")
+			errors[idx] = err
+		}(i)
+	}
+
+	// Concurrent SetAdmin calls
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = SetAdmin(admin) // Same admin, should be safe
+		}()
+	}
+
+	wg.Wait()
+
+	// Check for errors
+	for i, err := range errors {
+		if err != nil {
+			t.Errorf("Concurrent operation %d failed: %v", i, err)
+		}
+	}
+}
