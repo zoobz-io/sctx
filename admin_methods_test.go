@@ -11,9 +11,11 @@ import (
 
 // TestAdminPublicKeyAndAlgorithm tests PublicKey and Algorithm methods
 func TestAdminPublicKeyAndAlgorithm(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 
 	t.Run("Ed25519", func(t *testing.T) {
+		resetAdminForTesting()
 		_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 		admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
 		if err != nil {
@@ -41,6 +43,7 @@ func TestAdminPublicKeyAndAlgorithm(t *testing.T) {
 	})
 
 	t.Run("ECDSA", func(t *testing.T) {
+		resetAdminForTesting()
 		// Generate ECDSA key
 		_, privateKey, _ := GenerateKeyPair(CryptoECDSAP256)
 		admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
@@ -60,6 +63,7 @@ func TestAdminPublicKeyAndAlgorithm(t *testing.T) {
 
 // TestAdminActiveCount tests the ActiveCount method
 func TestAdminActiveCount(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	admin, _ := NewAdminService[any](privateKey, testCerts.CertPool)
@@ -111,6 +115,7 @@ children:
 
 // TestAdminRegisterProcessor tests the RegisterProcessor method
 func TestAdminRegisterProcessor(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	admin, _ := NewAdminService[any](privateKey, testCerts.CertPool)
@@ -163,6 +168,7 @@ children:
 
 // TestAdminSetCache tests the SetCache method
 func TestAdminSetCache(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	admin, _ := NewAdminService[any](privateKey, testCerts.CertPool)
@@ -206,6 +212,7 @@ func TestAdminSetCache(t *testing.T) {
 
 // TestAdminLoadContextSchemaFromFile tests loading schema from file
 func TestAdminLoadContextSchemaFromFile(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	admin, _ := NewAdminService[any](privateKey, testCerts.CertPool)

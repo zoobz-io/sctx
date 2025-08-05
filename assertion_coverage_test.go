@@ -290,6 +290,7 @@ func TestCertificateMatchesKeyEdgeCases(t *testing.T) {
 
 // TestCheckNonceProcessorEdgeCases tests nonce processor edge cases
 func TestCheckNonceProcessorEdgeCases(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	admin, _ := NewAdminService[any](privateKey, testCerts.CertPool)

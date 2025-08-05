@@ -16,6 +16,7 @@ import (
 
 // TestNewAdminServiceEdgeCases tests edge cases in NewAdminService
 func TestNewAdminServiceEdgeCases(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 
@@ -44,6 +45,7 @@ func TestNewAdminServiceEdgeCases(t *testing.T) {
 
 // TestGenerateEdgeCases tests remaining edge cases in Generate
 func TestGenerateEdgeCases(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	admin, _ := NewAdminService[any](privateKey, testCerts.CertPool)
@@ -70,6 +72,7 @@ func TestGenerateEdgeCases(t *testing.T) {
 	})
 
 	t.Run("No pipeline configured", func(t *testing.T) {
+		resetAdminForTesting()
 		// Create admin without configuring pipeline
 		admin2, _ := NewAdminService[any](privateKey, testCerts.CertPool)
 		assertion := createTestAssertion(t, testCerts.ClientKey, testCerts.ClientCert)
@@ -111,6 +114,7 @@ children:
 
 // TestCreateGuardEdgeCases tests remaining edge cases in CreateGuard
 func TestCreateGuardEdgeCases(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	admin, _ := NewAdminService[any](privateKey, testCerts.CertPool)
@@ -312,6 +316,7 @@ func TestGenerateKeyPairEdgeCases(t *testing.T) {
 
 // TestCheckNonceProcessorDuplicateNonce tests the duplicate nonce case
 func TestCheckNonceProcessorDuplicateNonce(t *testing.T) {
+	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	admin, _ := NewAdminService[any](privateKey, testCerts.CertPool)

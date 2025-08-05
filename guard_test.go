@@ -7,6 +7,7 @@ import (
 )
 
 func TestGuardCreation(t *testing.T) {
+	resetAdminForTesting()
 
 	// Generate test certificates
 	testCerts := GenerateTestCertificates(t)
@@ -275,6 +276,7 @@ children:
 }
 
 func TestGuardValidation(t *testing.T) {
+	resetAdminForTesting()
 
 	// Generate test certificates
 	testCerts := GenerateTestCertificates(t)

@@ -17,8 +17,18 @@ import (
 // Config types removed - now using flume schemas for configuration
 
 var (
-	ErrInvalidKey = errors.New("invalid private key")
+	ErrInvalidKey          = errors.New("invalid private key")
+	ErrAdminAlreadyCreated = errors.New("admin service already created - only one admin allowed per application instance")
+	adminOnce              sync.Once
+	adminCreated           bool
 )
+
+// resetAdminForTesting resets the admin singleton state for testing purposes
+// This function should only be used in tests
+func resetAdminForTesting() {
+	adminOnce = sync.Once{}
+	adminCreated = false
+}
 
 // adminService is the security authority that creates and validates tokens
 type adminService[M any] struct {
@@ -45,8 +55,8 @@ type adminService[M any] struct {
 	certificateLogger *zlog.Logger[CertificateEvent]
 }
 
-// NewAdminService creates a new admin service instance
-func NewAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin, error) {
+// createAdminService is the internal implementation of admin service creation
+func createAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin, error) {
 	if privateKey == nil {
 		return nil, ErrInvalidKey
 	}
@@ -124,6 +134,23 @@ func NewAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertP
 	cache.Start(shutdown, &wg)
 
 	return result, nil
+}
+
+// NewAdminService creates a new admin service instance - only one admin allowed per application instance
+func NewAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin, error) {
+	if adminCreated {
+		return nil, ErrAdminAlreadyCreated
+	}
+
+	var admin Admin
+	var err error
+
+	adminOnce.Do(func() {
+		adminCreated = true
+		admin, err = createAdminService[M](privateKey, trustedCAs)
+	})
+
+	return admin, err
 }
 
 // PublicKey returns the public key for token verification

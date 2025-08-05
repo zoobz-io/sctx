@@ -126,6 +126,7 @@ func TestContextCloneEdgeCases(t *testing.T) {
 
 // TestEncodeAndSignEdgeCases tests edge cases in encodeAndSign
 func TestEncodeAndSignEdgeCases(t *testing.T) {
+	resetAdminForTesting()
 	// This function is internal but we can test it through the admin service
 	testCerts := GenerateTestCertificates(t)
 

@@ -7,6 +7,7 @@ import (
 )
 
 func TestAdminServicePipelines(t *testing.T) {
+	resetAdminForTesting()
 
 	// Generate test certificates
 	testCerts := GenerateTestCertificates(t)
@@ -50,6 +51,7 @@ children:
 	})
 
 	t.Run("no context pipeline configured", func(t *testing.T) {
+		resetAdminForTesting()
 		// Create fresh admin without pipeline
 		admin2, err := NewAdminService[any](privateKey, testCerts.CertPool)
 		if err != nil {
@@ -73,6 +75,7 @@ children:
 }
 
 func TestAdminServiceBasicOperations(t *testing.T) {
+	resetAdminForTesting()
 
 	// Generate test certificates
 	testCerts := GenerateTestCertificates(t)
@@ -210,6 +213,7 @@ children:
 }
 
 func TestAdminServiceCertificateValidation(t *testing.T) {
+	resetAdminForTesting()
 
 	// Generate test certificates
 	testCerts := GenerateTestCertificates(t)

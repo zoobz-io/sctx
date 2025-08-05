@@ -7,6 +7,7 @@ import (
 )
 
 func TestFlumeIntegration(t *testing.T) {
+	resetAdminForTesting()
 	// Generate test certificates
 	testCerts := GenerateTestCertificates(t)
 
@@ -47,6 +48,7 @@ children:
 	})
 
 	t.Run("complex schema with permissions", func(t *testing.T) {
+		resetAdminForTesting()
 		// Create fresh admin for this test
 		admin2, err := NewAdminService[any](privateKey, testCerts.CertPool)
 		if err != nil {
@@ -113,6 +115,7 @@ children:
 	})
 
 	t.Run("no pipeline configured", func(t *testing.T) {
+		resetAdminForTesting()
 		// Create fresh admin without pipeline
 		admin2, err := NewAdminService[any](privateKey, testCerts.CertPool)
 		if err != nil {

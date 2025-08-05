@@ -12,6 +12,7 @@ import (
 )
 
 func TestTypedHooks(t *testing.T) {
+	resetAdminForTesting()
 	// Generate test certificates
 	testCerts := GenerateTestCertificates(t)
 
@@ -167,6 +168,7 @@ children:
 	})
 
 	t.Run("multiple hooks on same signal", func(t *testing.T) {
+		resetAdminForTesting()
 		// Create a fresh admin service for this test
 		_, privateKey2, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
