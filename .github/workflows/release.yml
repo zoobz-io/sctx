@@ -2,115 +2,129 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false  # Never cancel releases
 
 permissions:
-  contents: write
+  contents: write  # Required for creating releases
+  packages: write  # Required if publishing to GitHub Packages
+  id-token: write  # Required for signing
 
 jobs:
-  release:
-    name: Create Release
+  # Validate the module before release
+  validate:
+    name: Validate Module
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # Fetch all history for svu
-    
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.23'
-    
-    - name: Install svu
-      run: go install github.com/caarlos0/svu@latest
-    
-    - name: Run tests
-      run: go test -v ./...
-    
-    - name: Calculate next version
-      id: version
-      run: |
-        NEXT_VERSION=$(svu next)
-        echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
-        echo "Next version will be: $NEXT_VERSION"
-    
-    - name: Check if tag exists
-      id: check_tag
-      run: |
-        if git rev-parse "${{ steps.version.outputs.next_version }}" >/dev/null 2>&1; then
-          echo "exists=true" >> $GITHUB_OUTPUT
-        else
-          echo "exists=false" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Create tag
-      if: steps.check_tag.outputs.exists == 'false'
-      run: |
-        git config user.name "GitHub Actions"
-        git config user.email "actions@github.com"
-        git tag -a "${{ steps.version.outputs.next_version }}" -m "Release ${{ steps.version.outputs.next_version }}"
-        git push origin "${{ steps.version.outputs.next_version }}"
-    
-    - name: Update CHANGELOG.md
-      if: steps.check_tag.outputs.exists == 'false'
-      run: |
-        # Get the last tag
-        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-        
-        # Collect commits since last tag and format them
-        echo "## [${{ steps.version.outputs.next_version }}] - $(date +%Y-%m-%d)" > new_release.md
-        echo "" >> new_release.md
-        
-        # Group commits by type
-        FEAT_COMMITS=$(git log --pretty=format:"%s" ${LAST_TAG:+$LAST_TAG..}HEAD | grep -E "^(feat|add):" | sed 's/^feat: /- /' | sed 's/^add: /- /' || true)
-        FIX_COMMITS=$(git log --pretty=format:"%s" ${LAST_TAG:+$LAST_TAG..}HEAD | grep -E "^(fix|bugfix):" | sed 's/^fix: /- /' | sed 's/^bugfix: /- /' || true)
-        CHANGE_COMMITS=$(git log --pretty=format:"%s" ${LAST_TAG:+$LAST_TAG..}HEAD | grep -E "^(change|update|refactor):" | sed 's/^change: /- /' | sed 's/^update: /- /' | sed 's/^refactor: /- /' || true)
-        
-        if [ ! -z "$FEAT_COMMITS" ]; then
-          echo "### Added" >> new_release.md
-          echo "$FEAT_COMMITS" >> new_release.md
-          echo "" >> new_release.md
-        fi
-        
-        if [ ! -z "$CHANGE_COMMITS" ]; then
-          echo "### Changed" >> new_release.md
-          echo "$CHANGE_COMMITS" >> new_release.md
-          echo "" >> new_release.md
-        fi
-        
-        if [ ! -z "$FIX_COMMITS" ]; then
-          echo "### Fixed" >> new_release.md
-          echo "$FIX_COMMITS" >> new_release.md
-          echo "" >> new_release.md
-        fi
-        
-        # Update CHANGELOG - insert new release after # Changelog
-        awk '/^# Changelog/{print; print ""; system("cat new_release.md"); next} 1' CHANGELOG.md > temp_changelog.md
-        mv temp_changelog.md CHANGELOG.md
-        
-        # Commit the updated changelog
-        git config user.name "GitHub Actions"
-        git config user.email "actions@github.com"
-        git add CHANGELOG.md
-        git commit -m "chore: release ${{ steps.version.outputs.next_version }}" || echo "No changes to commit"
-        git push origin main
-    
-    - name: Extract release notes
-      id: release_notes
-      run: |
-        # Extract the release notes for this version
-        awk '/^## \[${{ steps.version.outputs.next_version }}\]/{flag=1; next} /^## \[/{flag=0} flag' CHANGELOG.md > release_notes.md
-    
-    - name: Create Release
-      if: steps.check_tag.outputs.exists == 'false'
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.version.outputs.next_version }}
-        release_name: Release ${{ steps.version.outputs.next_version }}
-        draft: false
-        prerelease: false
-        body_path: release_notes.md
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for changelog generation
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-1.23-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-1.23-
+      
+      - name: Validate go.mod
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum need updating" && exit 1)
+      
+      - name: Run tests
+        run: make test-race
+      
+      - name: Run linting
+        run: make lint
+
+  # Create release when tag is pushed
+  release:
+    name: Create Release
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for changelog generation
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          install-only: true
+      
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload Release Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+          retention-days: 7
+
+  # Verify release creation
+  verify:
+    name: Verify Release
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      
+      - name: Get release version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+      - name: Verify module can be fetched
+        run: |
+          # Wait a moment for the release to propagate
+          sleep 10
+          
+          # Create a test module
+          mkdir -p /tmp/test-sctx
+          cd /tmp/test-sctx
+          go mod init test
+          
+          # Try to get the new version
+          go get github.com/zoobzio/sctx@${{ steps.version.outputs.VERSION }}
+          
+          # Verify it was fetched
+          go list -m github.com/zoobzio/sctx
+      
+      - name: Create release summary
+        run: |
+          echo "### Release ${{ steps.version.outputs.VERSION }} Published Successfully! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Installation" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "go get github.com/zoobzio/sctx@${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Release Notes" >> $GITHUB_STEP_SUMMARY
+          echo "View the full release notes at: https://github.com/zoobzio/sctx/releases/tag/${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
