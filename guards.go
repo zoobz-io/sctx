@@ -11,7 +11,7 @@ import (
 )
 
 // ContextGuard is a function that enriches a context in the pipeline
-type ContextGuard[M any] = func(context.Context, *Context[M]) (*Context[M], error)
+type ContextGuard[M any] func(context.Context, *Context[M]) (*Context[M], error)
 
 // Context Enrichment Guards - for building security context from certificates
 
