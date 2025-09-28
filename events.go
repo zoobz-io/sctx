@@ -1,13 +1,5 @@
 package sctx
 
-import (
-	"context"
-	"fmt"
-
-	"github.com/zoobzio/pipz"
-	"github.com/zoobzio/zlog"
-)
-
 // ContextEvent represents token/context lifecycle events
 type ContextEvent[M any] struct {
 	Context   *Context[M]
@@ -59,37 +51,40 @@ func (e CertificateEvent) Clone() CertificateEvent {
 // Security audit signals for sctx events.
 // These signals can be routed to audit logs, SIEM systems, or monitoring tools.
 //
-//nolint:revive // Signal constants follow zlog convention of ALL_CAPS
+//nolint:revive // Signal constants follow convention of ALL_CAPS
 const (
 	// TOKEN_GENERATED indicates a new token was created from a certificate
-	TOKEN_GENERATED = zlog.Signal("TOKEN_GENERATED")
+	TOKEN_GENERATED = "TOKEN_GENERATED"
 
 	// TOKEN_VERIFIED indicates successful token verification
-	TOKEN_VERIFIED = zlog.Signal("TOKEN_VERIFIED")
+	TOKEN_VERIFIED = "TOKEN_VERIFIED"
 
 	// TOKEN_REJECTED indicates failed token verification
-	TOKEN_REJECTED = zlog.Signal("TOKEN_REJECTED")
+	TOKEN_REJECTED = "TOKEN_REJECTED"
 
 	// GUARD_CREATED indicates a new guard was created
-	GUARD_CREATED = zlog.Signal("GUARD_CREATED")
+	GUARD_CREATED = "GUARD_CREATED"
 
 	// GUARD_VALIDATED indicates successful guard validation
-	GUARD_VALIDATED = zlog.Signal("GUARD_VALIDATED")
+	GUARD_VALIDATED = "GUARD_VALIDATED"
 
 	// GUARD_REJECTED indicates failed guard validation
-	GUARD_REJECTED = zlog.Signal("GUARD_REJECTED")
+	GUARD_REJECTED = "GUARD_REJECTED"
 
 	// CONTEXT_REVOKED indicates a context was manually revoked
-	CONTEXT_REVOKED = zlog.Signal("CONTEXT_REVOKED")
+	CONTEXT_REVOKED = "CONTEXT_REVOKED"
 
 	// CONTEXT_EXPIRED indicates a context expired naturally
-	CONTEXT_EXPIRED = zlog.Signal("CONTEXT_EXPIRED")
+	CONTEXT_EXPIRED = "CONTEXT_EXPIRED"
 
 	// CERTIFICATE_REJECTED indicates certificate validation failure
-	CERTIFICATE_REJECTED = zlog.Signal("CERTIFICATE_REJECTED")
+	CERTIFICATE_REJECTED = "CERTIFICATE_REJECTED"
 
 	// ADMIN_CHANGED indicates the admin service was changed
-	ADMIN_CHANGED = zlog.Signal("ADMIN_CHANGED")
+	ADMIN_CHANGED = "ADMIN_CHANGED"
+
+	// PIPELINE_UPDATED indicates the context pipeline was updated
+	PIPELINE_UPDATED = "PIPELINE_UPDATED"
 )
 
 // Processor names as constants
@@ -98,41 +93,3 @@ const (
 	ProcessorSanitizeCertificate = "sanitize-certificate"
 )
 
-// certificateSanitizer sanitizes certificate events
-var certificateSanitizer = pipz.Transform[zlog.Event[CertificateEvent]](ProcessorSanitizeCertificate,
-	func(ctx context.Context, event zlog.Event[CertificateEvent]) zlog.Event[CertificateEvent] {
-		sanitized := event.Clone()
-
-		// Keep certificate for debugging but could redact sensitive fields
-		// For now, just ensure error messages don't leak sensitive info
-		if sanitized.Data.Error != nil {
-			sanitized.Data.Error = fmt.Errorf("certificate validation failed")
-		}
-
-		return sanitized
-	})
-
-// getContextSanitizer returns a type-specific context sanitizer
-func getContextSanitizer[M any]() pipz.Chainable[zlog.Event[ContextEvent[M]]] {
-	// Create type-specific sanitizer
-	return pipz.Transform[zlog.Event[ContextEvent[M]]](ProcessorSanitizeContext,
-		func(ctx context.Context, event zlog.Event[ContextEvent[M]]) zlog.Event[ContextEvent[M]] {
-			sanitized := event.Clone()
-
-			if sanitized.Data.Context != nil {
-				safeCtx := sanitized.Data.Context.Clone()
-				// Clear metadata - we can't assign nil to generic type
-				var zeroMetadata M
-				safeCtx.Metadata = zeroMetadata
-
-				if len(safeCtx.Permissions) > 5 {
-					safeCtx.Permissions = append(safeCtx.Permissions[:3],
-						fmt.Sprintf("...and %d more", len(safeCtx.Permissions)-3))
-				}
-
-				sanitized.Data.Context = safeCtx
-			}
-
-			return sanitized
-		})
-}

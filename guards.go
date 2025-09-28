@@ -118,8 +118,9 @@ func extractCertInfoField(certInfo CertificateInfo, field string) string {
 // guardImpl implements the Guard interface
 type guardImpl struct {
 	id                  string
+	creatorFingerprint  string   // Certificate fingerprint of the guard creator
 	requiredPermissions []string
-	validate            func(SignedToken) error
+	validate            func(context.Context, ...SignedToken) error
 }
 
 // ID returns the unique identifier for this guard
@@ -128,8 +129,8 @@ func (g *guardImpl) ID() string {
 }
 
 // Validate checks if the token has the required permissions
-func (g *guardImpl) Validate(token SignedToken) error {
-	return g.validate(token)
+func (g *guardImpl) Validate(ctx context.Context, tokens ...SignedToken) error {
+	return g.validate(ctx, tokens...)
 }
 
 // Permissions returns the list of permissions this guard checks

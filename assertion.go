@@ -13,8 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/zoobzio/pipz"
 )
 
 // SignedAssertion represents a signed claim proving private key possession
@@ -32,21 +30,10 @@ type AssertionClaims struct {
 	Fingerprint string    `json:"fingerprint"` // Must match certificate
 }
 
-// AssertionContext is used for pipeline processing
+// AssertionContext is used for validation processing
 type AssertionContext struct {
 	Assertion   SignedAssertion
 	Certificate *x509.Certificate
-}
-
-// Clone implements pipz.Cloner interface
-func (ac *AssertionContext) Clone() *AssertionContext {
-	return &AssertionContext{
-		Assertion: SignedAssertion{
-			Claims:    ac.Assertion.Claims,
-			Signature: append([]byte(nil), ac.Assertion.Signature...),
-		},
-		Certificate: ac.Certificate,
-	}
 }
 
 // CreateAssertion helps clients create properly signed assertions
@@ -179,123 +166,115 @@ func publicKeysEqual(a, b crypto.PublicKey) bool {
 	}
 }
 
-// Processor names for assertion validation
-const (
-	ProcessorVerifySignature  = "verify-signature"
-	ProcessorCheckExpiration  = "check-expiration"
-	ProcessorCheckNonce       = "check-nonce"
-	ProcessorValidateClaims   = "validate-claims"
-	ProcessorMatchFingerprint = "match-fingerprint"
-)
-
-// CreateAssertionProcessors creates processors for assertion validation
-func CreateAssertionProcessors[M any]() map[string]pipz.Chainable[*AssertionContext] {
-	processors := map[string]pipz.Chainable[*AssertionContext]{
-		ProcessorVerifySignature:  verifySignatureProcessor(),
-		ProcessorCheckExpiration:  checkExpirationProcessor(),
-		ProcessorMatchFingerprint: matchFingerprintProcessor(),
+// ValidateAssertion performs complete assertion validation using direct function calls
+func ValidateAssertion[M any](ctx context.Context, assertion SignedAssertion, cert *x509.Certificate, admin *adminService[M]) error {
+	ac := &AssertionContext{
+		Assertion:   assertion,
+		Certificate: cert,
 	}
 
-	// Add claim validators
-	processors[ProcessorValidateClaims] = validateClaimsProcessor()
+	// Step 1: Verify signature
+	if err := verifySignatureStep(ctx, ac); err != nil {
+		return err
+	}
 
-	return processors
+	// Step 2: Check expiration
+	if err := checkExpirationStep(ctx, ac); err != nil {
+		return err
+	}
+
+	// Step 3: Check nonce (requires admin service for nonce cache)
+	if err := checkNonceStep(ctx, ac, admin); err != nil {
+		return err
+	}
+
+	// Step 4: Match fingerprint
+	if err := matchFingerprintStep(ctx, ac); err != nil {
+		return err
+	}
+
+	// Step 5: Validate claims
+	if err := validateClaimsStep(ctx, ac); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-// verifySignatureProcessor verifies the assertion signature matches the certificate
-var verifySignatureProcessor = func() pipz.Chainable[*AssertionContext] {
-	return pipz.Apply[*AssertionContext](ProcessorVerifySignature,
-		func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) {
-			if err := verifyAssertion(ac.Assertion, ac.Certificate); err != nil {
-				return nil, fmt.Errorf("signature verification failed: %w", err)
-			}
-			return ac, nil
-		})
+// verifySignatureStep verifies the assertion signature matches the certificate
+func verifySignatureStep(ctx context.Context, ac *AssertionContext) error {
+	if err := verifyAssertion(ac.Assertion, ac.Certificate); err != nil {
+		return fmt.Errorf("signature verification failed: %w", err)
+	}
+	return nil
 }
 
-// checkExpirationProcessor ensures the assertion hasn't expired
-var checkExpirationProcessor = func() pipz.Chainable[*AssertionContext] {
-	return pipz.Apply[*AssertionContext](ProcessorCheckExpiration,
-		func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) {
-			now := time.Now()
+// checkExpirationStep ensures the assertion hasn't expired
+func checkExpirationStep(ctx context.Context, ac *AssertionContext) error {
+	now := time.Now()
 
-			// Check not expired
-			if now.After(ac.Assertion.Claims.ExpiresAt) {
-				return nil, errors.New("assertion expired")
-			}
+	// Check not expired
+	if now.After(ac.Assertion.Claims.ExpiresAt) {
+		return errors.New("assertion expired")
+	}
 
-			// Check not issued in future (with 10s clock skew)
-			if ac.Assertion.Claims.IssuedAt.After(now.Add(10 * time.Second)) {
-				return nil, errors.New("assertion issued in future")
-			}
+	// Check not issued in future (with 10s clock skew)
+	if ac.Assertion.Claims.IssuedAt.After(now.Add(10 * time.Second)) {
+		return errors.New("assertion issued in future")
+	}
 
-			// Check reasonable lifetime (max 5 minutes)
-			lifetime := ac.Assertion.Claims.ExpiresAt.Sub(ac.Assertion.Claims.IssuedAt)
-			if lifetime > 5*time.Minute {
-				return nil, fmt.Errorf("assertion lifetime too long: %v", lifetime)
-			}
+	// Check reasonable lifetime (max 5 minutes)
+	lifetime := ac.Assertion.Claims.ExpiresAt.Sub(ac.Assertion.Claims.IssuedAt)
+	if lifetime > 5*time.Minute {
+		return fmt.Errorf("assertion lifetime too long: %v", lifetime)
+	}
 
-			return ac, nil
-		})
+	return nil
 }
 
-// checkNonceProcessor prevents replay attacks
-func checkNonceProcessor[M any](admin *adminService[M]) pipz.Chainable[*AssertionContext] {
-	return pipz.Apply[*AssertionContext](ProcessorCheckNonce,
-		func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) {
-			nonce := ac.Assertion.Claims.Nonce
-			if nonce == "" {
-				return nil, errors.New("assertion missing nonce")
-			}
+// checkNonceStep prevents replay attacks
+func checkNonceStep[M any](ctx context.Context, ac *AssertionContext, admin *adminService[M]) error {
+	nonce := ac.Assertion.Claims.Nonce
+	if nonce == "" {
+		return errors.New("assertion missing nonce")
+	}
 
-			admin.nonceMu.Lock()
-			defer admin.nonceMu.Unlock()
+	admin.nonceMu.Lock()
+	defer admin.nonceMu.Unlock()
 
-			// Clean expired nonces
-			now := time.Now()
-			for n, expiry := range admin.nonceCache {
-				if now.After(expiry) {
-					delete(admin.nonceCache, n)
-				}
-			}
+	// Clean expired nonces
+	admin.cleanExpiredNonces()
 
-			// Check if nonce was already used
-			if _, exists := admin.nonceCache[nonce]; exists {
-				return nil, errors.New("nonce already used")
-			}
+	// Check if nonce was already used
+	if _, exists := admin.nonceCache[nonce]; exists {
+		return errors.New("nonce already used")
+	}
 
-			// Store nonce with expiration
-			admin.nonceCache[nonce] = ac.Assertion.Claims.ExpiresAt.Add(5 * time.Minute)
+	// Store nonce with expiration
+	admin.nonceCache[nonce] = ac.Assertion.Claims.ExpiresAt.Add(5 * time.Minute)
 
-			return ac, nil
-		})
+	return nil
 }
 
-// matchFingerprintProcessor ensures assertion matches certificate
-var matchFingerprintProcessor = func() pipz.Chainable[*AssertionContext] {
-	return pipz.Apply[*AssertionContext](ProcessorMatchFingerprint,
-		func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) {
-			certFingerprint := getFingerprint(ac.Certificate)
-			if ac.Assertion.Claims.Fingerprint != certFingerprint {
-				return nil, fmt.Errorf("fingerprint mismatch: assertion has %s, certificate has %s",
-					ac.Assertion.Claims.Fingerprint, certFingerprint)
-			}
-			return ac, nil
-		})
+// matchFingerprintStep ensures assertion matches certificate
+func matchFingerprintStep(ctx context.Context, ac *AssertionContext) error {
+	certFingerprint := getFingerprint(ac.Certificate)
+	if ac.Assertion.Claims.Fingerprint != certFingerprint {
+		return fmt.Errorf("fingerprint mismatch: assertion has %s, certificate has %s",
+			ac.Assertion.Claims.Fingerprint, certFingerprint)
+	}
+	return nil
 }
 
-// validateClaimsProcessor ensures required claims are present
-var validateClaimsProcessor = func() pipz.Chainable[*AssertionContext] {
-	return pipz.Apply[*AssertionContext](ProcessorValidateClaims,
-		func(ctx context.Context, ac *AssertionContext) (*AssertionContext, error) {
-			claims := ac.Assertion.Claims
+// validateClaimsStep ensures required claims are present
+func validateClaimsStep(ctx context.Context, ac *AssertionContext) error {
+	claims := ac.Assertion.Claims
 
-			// Validate purpose
-			if claims.Purpose != "token-generation" {
-				return nil, fmt.Errorf("invalid purpose: %s", claims.Purpose)
-			}
+	// Validate purpose
+	if claims.Purpose != "token-generation" {
+		return fmt.Errorf("invalid purpose: %s", claims.Purpose)
+	}
 
-			// All validations passed
-			return ac, nil
-		})
+	// All validations passed
+	return nil
 }

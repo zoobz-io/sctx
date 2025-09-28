@@ -8,17 +8,12 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/zoobzio/flume"
-	"github.com/zoobzio/pipz"
-	"github.com/zoobzio/zlog"
 )
-
-// Config types removed - now using flume schemas for configuration
 
 var (
 	ErrInvalidKey          = errors.New("invalid private key")
 	ErrAdminAlreadyCreated = errors.New("admin service already created - only one admin allowed per application instance")
+	ErrNoPolicy            = errors.New("no context policy configured")
 	adminOnce              sync.Once
 	adminCreated           bool
 )
@@ -38,10 +33,11 @@ type adminService[M any] struct {
 	cache      ContextCache[M]
 	signer     CryptoSigner
 
-	// Pipeline architecture
-	contextFactory    *flume.Factory[*Context[M]]       // For certificate → context processing
-	contextPipeline   pipz.Chainable[*Context[M]]       // Active context processing pipeline
-	assertionPipeline pipz.Chainable[*AssertionContext] // Fixed assertion validation pipeline
+	// Policy function for transforming certificates into contexts
+	policy     ContextPolicy[M]
+	policyMu   sync.RWMutex
+	
+	// Assertion validation using direct function calls (no pipz dependency)
 
 	// Guard configuration
 	guardCreationPermissions []string // Required permissions to create guards
@@ -50,13 +46,10 @@ type adminService[M any] struct {
 	nonceMu    sync.RWMutex
 	nonceCache map[string]time.Time
 
-	// Typed loggers
-	contextLogger     *zlog.Logger[ContextEvent[M]]
-	certificateLogger *zlog.Logger[CertificateEvent]
 }
 
 // createAdminService is the internal implementation of admin service creation
-func createAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin, error) {
+func createAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin[M], error) {
 	if privateKey == nil {
 		return nil, ErrInvalidKey
 	}
@@ -79,70 +72,36 @@ func createAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.Ce
 	// Create cache with 5 minute cleanup
 	cache := newMemoryContextCache[M](5 * time.Minute)
 
-	// Create context processing factory and register processors
-	contextFactory := flume.New[*Context[M]]()
-	processors := CreateProcessors[M]()
-	contextFactory.Add(
-		// Context manipulation processors
-		processors.SetExpiryOneHour,
-		processors.SetExpiryFiveMinutes,
-		// Permission processors
-		processors.GrantRead,
-		processors.GrantWrite,
-		processors.GrantAdmin,
-		processors.GrantCreateGuard,
-	)
-
-	// Create typed loggers
-	contextLogger := zlog.NewLogger[ContextEvent[M]]()
-	certificateLogger := zlog.NewLogger[CertificateEvent]()
-
-	// Add sanitizers before forwarding to global logger
-	contextLogger.HookAll(getContextSanitizer[M]())
-	certificateLogger.HookAll(certificateSanitizer)
-
-	// Enable global forwarding
-	contextLogger.Watch()
-	certificateLogger.Watch()
-
 	result := &adminService[M]{
 		privateKey:        privateKey,
 		publicKey:         signer.PublicKey(),
 		certPool:          trustedCAs,
 		cache:             cache,
 		signer:            signer,
-		contextFactory:    contextFactory,
 		nonceCache:        make(map[string]time.Time),
-		contextLogger:     contextLogger,
-		certificateLogger: certificateLogger,
 	}
 
-	// Create fixed assertion validation pipeline
-	assertionProcessors := CreateAssertionProcessors[M]()
-	assertionPipeline := pipz.NewSequence[*AssertionContext]("assertion-validation",
-		assertionProcessors[ProcessorVerifySignature],
-		assertionProcessors[ProcessorCheckExpiration],
-		checkNonceProcessor(result),
-		assertionProcessors[ProcessorMatchFingerprint],
-		assertionProcessors[ProcessorValidateClaims],
-	)
-	result.assertionPipeline = assertionPipeline
+	// Assertion validation now uses direct function calls - no pipeline setup needed
 
 	// Start cache cleanup
 	shutdown := make(chan struct{})
 	var wg sync.WaitGroup
 	cache.Start(shutdown, &wg)
 
+	// Set default policy
+	result.policy = DefaultContextPolicy[M]()
+
 	return result, nil
 }
 
+
 // NewAdminService creates a new admin service instance - only one admin allowed per application instance
-func NewAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin, error) {
+func NewAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin[M], error) {
 	if adminCreated {
 		return nil, ErrAdminAlreadyCreated
 	}
 
-	var admin Admin
+	var admin Admin[M]
 	var err error
 
 	adminOnce.Do(func() {
@@ -163,23 +122,26 @@ func (a *adminService[M]) Algorithm() CryptoAlgorithm {
 	return a.signer.Algorithm()
 }
 
+// cleanExpiredNonces removes expired nonces from the cache
+func (a *adminService[M]) cleanExpiredNonces() {
+	now := time.Now()
+	for nonce, expiry := range a.nonceCache {
+		if now.After(expiry) {
+			delete(a.nonceCache, nonce)
+		}
+	}
+}
+
 // Cache operations for admin control
 
 // RevokeByFingerprint removes a context from the cache
 func (a *adminService[M]) RevokeByFingerprint(fingerprint string) error {
-	// Get context info before deletion for audit
-	ctx, exists := a.cache.Get(fingerprint)
-	if exists && ctx != nil {
-		cn := ctx.CertificateInfo.CommonName
-		a.contextLogger.Emit(CONTEXT_REVOKED,
-			fmt.Sprintf("Context manually revoked for %s", cn),
-			ContextEvent[M]{
-				Context:   ctx,
-				Token:     "", // Token not available in revoke
-				Operation: "revoked",
-			},
-		)
-	}
+	// Clean expired nonces during this write operation
+	a.nonceMu.Lock()
+	a.cleanExpiredNonces()
+	a.nonceMu.Unlock()
+
+	// Context will be revoked
 	return a.cache.Delete(fingerprint)
 }
 
@@ -196,9 +158,17 @@ func (a *adminService[M]) ActiveCount() int {
 	return -1 // Unknown
 }
 
-// RegisterProcessor registers a custom processor with the context factory
-func (a *adminService[M]) RegisterProcessor(name string, guard ContextGuard[M]) {
-	a.contextFactory.Add(pipz.Apply(pipz.Name(name), guard))
+// SetPolicy sets the context policy function
+func (a *adminService[M]) SetPolicy(policy ContextPolicy[M]) error {
+	a.policyMu.Lock()
+	defer a.policyMu.Unlock()
+	
+	if policy == nil {
+		return errors.New("policy cannot be nil")
+	}
+	
+	a.policy = policy
+	return nil
 }
 
 // SetCache replaces the context cache implementation
@@ -211,49 +181,16 @@ func (a *adminService[M]) SetCache(cache ContextCache[M]) error {
 	return nil
 }
 
-// LoadContextSchema configures the context processing pipeline from a YAML schema
-func (a *adminService[M]) LoadContextSchema(yamlStr string) error {
-	pipeline, err := a.contextFactory.BuildFromYAML(yamlStr)
-	if err != nil {
-		return fmt.Errorf("failed to build context pipeline from schema: %w", err)
-	}
-	a.contextPipeline = pipeline
-	return nil
-}
-
-// LoadContextSchemaFromFile loads a context schema from a file
-func (a *adminService[M]) LoadContextSchemaFromFile(path string) error {
-	pipeline, err := a.contextFactory.BuildFromFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to build context pipeline from file %s: %w", path, err)
-	}
-	a.contextPipeline = pipeline
-	return nil
-}
 
 // Generate creates a token for the given certificate and assertion
-func (a *adminService[M]) Generate(cert *x509.Certificate, assertion SignedAssertion) (SignedToken, error) {
+func (a *adminService[M]) Generate(ctx context.Context, cert *x509.Certificate, assertion SignedAssertion) (SignedToken, error) {
 	if cert == nil {
 		return "", errors.New("certificate is required")
 	}
 
-	// Validate assertion through fixed pipeline
-
-	assertionCtx := &AssertionContext{
-		Assertion:   assertion,
-		Certificate: cert,
-	}
-
-	_, err := a.assertionPipeline.Process(context.Background(), assertionCtx)
+	// Validate assertion using direct function calls
+	err := ValidateAssertion(ctx, assertion, cert, a)
 	if err != nil {
-		a.certificateLogger.Emit(CERTIFICATE_REJECTED,
-			fmt.Sprintf("Certificate rejected due to invalid assertion: %s", cert.Subject.CommonName),
-			CertificateEvent{
-				CertificateInfo: extractCertificateInfo(cert),
-				Reason:          "assertion validation failed",
-				Error:           err,
-			},
-		)
 		return "", fmt.Errorf("assertion validation failed: %w", err)
 	}
 
@@ -265,14 +202,6 @@ func (a *adminService[M]) Generate(cert *x509.Certificate, assertion SignedAsser
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}
 	if _, err := cert.Verify(opts); err != nil {
-		a.certificateLogger.Emit(CERTIFICATE_REJECTED,
-			fmt.Sprintf("Certificate rejected: %s", cert.Subject.CommonName),
-			CertificateEvent{
-				CertificateInfo: extractCertificateInfo(cert),
-				Reason:          "validation failed",
-				Error:           err,
-			},
-		)
 		return "", fmt.Errorf("certificate verification failed: %w", err)
 	}
 
@@ -282,66 +211,56 @@ func (a *adminService[M]) Generate(cert *x509.Certificate, assertion SignedAsser
 		return a.createToken(cached)
 	}
 
-	// Create new context with certificate info
-	ctx := &Context[M]{
-		CertificateInfo:        extractCertificateInfo(cert),
-		CertificateFingerprint: fingerprint,
-		IssuedAt:               time.Now(),
+	// Apply policy to transform certificate into context
+	a.policyMu.RLock()
+	policy := a.policy
+	a.policyMu.RUnlock()
+	
+	if policy == nil {
+		return "", ErrNoPolicy
 	}
-
-	// Run context enrichment pipeline
-	if a.contextPipeline == nil {
-		return "", errors.New("no context pipeline configured - use LoadContextSchema()")
-	}
-
-	// Run pipeline
-	result, err := a.contextPipeline.Process(context.Background(), ctx)
+	
+	secCtx, err := policy(cert)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("policy failed: %w", err)
 	}
-	ctx = result
+	
+	// Set certificate info and fingerprint (in case policy didn't)
+	if secCtx.CertificateInfo.CommonName == "" {
+		secCtx.CertificateInfo = extractCertificateInfo(cert)
+	}
+	if secCtx.CertificateFingerprint == "" {
+		secCtx.CertificateFingerprint = fingerprint
+	}
+	if secCtx.IssuedAt.IsZero() {
+		secCtx.IssuedAt = time.Now()
+	}
 
 	// Cache and return token
-	a.cache.Store(fingerprint, ctx)
-	token, err := a.createToken(ctx)
+	a.cache.Store(fingerprint, secCtx)
+	token, err := a.createToken(secCtx)
 	if err != nil {
 		return "", err
 	}
 
-	// Emit audit event
-	a.contextLogger.Emit(TOKEN_GENERATED,
-		fmt.Sprintf("Token generated for %s", ctx.CertificateInfo.CommonName),
-		ContextEvent[M]{
-			Context:   ctx,
-			Token:     string(token),
-			Operation: "generated",
-		},
-	)
+	// Token has been generated
 
 	return token, nil
 }
 
-// OnContext registers hooks for context/token events
-func (a *adminService[M]) OnContext(signal zlog.Signal, hooks ...func(context.Context, zlog.Event[ContextEvent[M]]) (zlog.Event[ContextEvent[M]], error)) {
-	for _, hook := range hooks {
-		wrapped := pipz.Apply[zlog.Event[ContextEvent[M]]]("user-hook", hook)
-		a.contextLogger.Hook(signal, wrapped)
-	}
-}
-
-// OnCertificate registers hooks for certificate events
-func (a *adminService[M]) OnCertificate(signal zlog.Signal, hooks ...func(context.Context, zlog.Event[CertificateEvent]) (zlog.Event[CertificateEvent], error)) {
-	for _, hook := range hooks {
-		wrapped := pipz.Apply[zlog.Event[CertificateEvent]]("user-hook", hook)
-		a.certificateLogger.Hook(signal, wrapped)
-	}
-}
 
 // createToken creates a signed token from a context
 func (a *adminService[M]) createToken(ctx *Context[M]) (SignedToken, error) {
+	// Token expiry should not exceed certificate expiry
+	tokenExpiry := ctx.ExpiresAt
+	if ctx.CertificateInfo.NotAfter.Before(tokenExpiry) {
+		tokenExpiry = ctx.CertificateInfo.NotAfter
+	}
+	
 	payload := &tokenPayload{
 		Fingerprint: ctx.CertificateFingerprint,
-		Expiry:      ctx.ExpiresAt,
+		IssuedAt:    time.Now(),
+		Expiry:      tokenExpiry,
 		Nonce:       generateContextID(),
 	}
 
@@ -363,26 +282,31 @@ func (a *adminService[M]) SetGuardCreationPermissions(perms []string) {
 }
 
 // CreateGuard creates a new guard that validates tokens for specific permissions
-func (a *adminService[M]) CreateGuard(token SignedToken, requiredPerms ...string) (Guard, error) {
+func (a *adminService[M]) CreateGuard(ctx context.Context, token SignedToken, requiredPerms ...string) (Guard, error) {
+	// Clean expired nonces during this write operation
+	a.nonceMu.Lock()
+	a.cleanExpiredNonces()
+	a.nonceMu.Unlock()
+
 	// 1. Validate token and get context
 	fingerprint, err := a.decryptToken(token)
 	if err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
 
-	context, exists := a.cache.Get(fingerprint)
+	secCtx, exists := a.cache.Get(fingerprint)
 	if !exists {
 		return nil, errors.New("context not found")
 	}
 
-	if context.IsExpired() {
+	if secCtx.IsExpired() {
 		return nil, errors.New("token expired")
 	}
 
 	// 2. Check guard creation permissions
 	if len(a.guardCreationPermissions) > 0 {
 		for _, perm := range a.guardCreationPermissions {
-			if !hasPermission(context.Permissions, perm) {
+			if !hasPermission(secCtx.Permissions, perm) {
 				return nil, fmt.Errorf("missing required permission to create guards: %s", perm)
 			}
 		}
@@ -390,37 +314,79 @@ func (a *adminService[M]) CreateGuard(token SignedToken, requiredPerms ...string
 
 	// 3. Ensure guard can only check permissions the creator has
 	for _, perm := range requiredPerms {
-		if !hasPermission(context.Permissions, perm) {
+		if !hasPermission(secCtx.Permissions, perm) {
 			return nil, fmt.Errorf("cannot create guard for permission you don't have: %s", perm)
 		}
 	}
 
 	// 4. Create guard closure
 	guardID := generateGuardID()
+	creatorFingerprint := secCtx.CertificateFingerprint // Store creator's fingerprint
 	guard := &guardImpl{
 		id:                  guardID,
+		creatorFingerprint:  creatorFingerprint,
 		requiredPermissions: requiredPerms,
-		validate: func(t SignedToken) error {
-			// Decrypt and validate token
-			fp, err := a.decryptToken(t)
+		validate: func(ctx context.Context, tokens ...SignedToken) error {
+			// Require at least one token
+			if len(tokens) == 0 {
+				return errors.New("at least one token required")
+			}
+
+			// First token is the caller
+			callerToken := tokens[0]
+			
+			// Validate caller token
+			callerFp, err := a.decryptToken(callerToken)
 			if err != nil {
-				return fmt.Errorf("invalid token: %w", err)
+				return fmt.Errorf("invalid caller token: %w", err)
 			}
 
-			// Get context and check permissions
-			ctx, exists := a.cache.Get(fp)
+			// CRITICAL: Verify caller is the guard creator
+			if callerFp != creatorFingerprint {
+				return errors.New("guard can only be used by its creator")
+			}
+
+			callerCtx, exists := a.cache.Get(callerFp)
 			if !exists {
-				return errors.New("context not found")
+				return errors.New("caller context not found")
 			}
 
-			if ctx.IsExpired() {
-				return errors.New("token expired")
+			if callerCtx.IsExpired() {
+				return errors.New("caller token expired")
 			}
 
-			// Check required permissions
-			for _, perm := range requiredPerms {
-				if !hasPermission(ctx.Permissions, perm) {
-					return fmt.Errorf("missing permission: %s", perm)
+
+			// Determine which tokens to validate for required permissions
+			var targetsToValidate []SignedToken
+			if len(tokens) == 1 {
+				// Self-validation: check if caller has required permissions
+				targetsToValidate = []SignedToken{callerToken}
+			} else {
+				// Delegation: validate other tokens
+				targetsToValidate = tokens[1:]
+			}
+
+			// Validate each target token
+			for i, targetToken := range targetsToValidate {
+				fp, err := a.decryptToken(targetToken)
+				if err != nil {
+					return fmt.Errorf("invalid token at position %d: %w", i+1, err)
+				}
+
+				ctx, exists := a.cache.Get(fp)
+				if !exists {
+					return fmt.Errorf("context not found for token at position %d", i+1)
+				}
+
+				if ctx.IsExpired() {
+					return fmt.Errorf("token at position %d expired", i+1)
+				}
+
+				// Check required permissions
+				for _, perm := range requiredPerms {
+					if !hasPermission(ctx.Permissions, perm) {
+						return fmt.Errorf("token at position %d missing permission: %s", i+1, perm)
+					}
 				}
 			}
 
@@ -428,15 +394,7 @@ func (a *adminService[M]) CreateGuard(token SignedToken, requiredPerms ...string
 		},
 	}
 
-	// 5. Emit event
-	a.contextLogger.Emit(GUARD_CREATED,
-		fmt.Sprintf("Guard %s created by %s", guardID, context.CertificateInfo.CommonName),
-		ContextEvent[M]{
-			Context:   context,
-			Token:     string(token),
-			Operation: "guard_created",
-		},
-	)
+	// Guard has been created
 
 	return guard, nil
 }

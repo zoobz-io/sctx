@@ -1,20 +1,24 @@
 package sctx
 
 import (
+	"context"
 	"crypto/x509"
 )
 
-// Admin is the non-generic interface for admin operations
-type Admin interface {
-	Generate(cert *x509.Certificate, assertion SignedAssertion) (SignedToken, error)
-	CreateGuard(token SignedToken, requiredPermissions ...string) (Guard, error)
+// ContextPolicy defines how to transform certificates into security contexts
+type ContextPolicy[M any] func(cert *x509.Certificate) (*Context[M], error)
+
+// Admin is the interface for admin operations
+type Admin[M any] interface {
+	Generate(ctx context.Context, cert *x509.Certificate, assertion SignedAssertion) (SignedToken, error)
+	CreateGuard(ctx context.Context, token SignedToken, requiredPermissions ...string) (Guard, error)
 	SetGuardCreationPermissions(perms []string)
-	LoadContextSchema(yamlStr string) error
+	SetPolicy(policy ContextPolicy[M]) error
 }
 
 // Guard validates tokens against required permissions
 type Guard interface {
 	ID() string
-	Validate(token SignedToken) error
+	Validate(ctx context.Context, tokens ...SignedToken) error
 	Permissions() []string
 }

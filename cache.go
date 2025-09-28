@@ -3,8 +3,6 @@ package sctx
 import (
 	"sync"
 	"time"
-
-	"github.com/zoobzio/zlog"
 )
 
 // ContextCache manages active contexts with automatic cleanup
@@ -90,16 +88,7 @@ func (s *memoryContextCache[M]) cleanupExpiredContexts(shutdown chan struct{}) {
 			for fingerprint, ctx := range s.contexts {
 				if now.After(ctx.ExpiresAt) {
 					delete(s.contexts, fingerprint)
-					// Emit audit event for natural expiration
-					cn := ""
-					if ctx != nil {
-						cn = ctx.CertificateInfo.CommonName
-					}
-					zlog.Emit(CONTEXT_EXPIRED, "Context expired naturally",
-						zlog.String("fingerprint", fingerprint),
-						zlog.String("cn", cn),
-						zlog.Time("expired_at", ctx.ExpiresAt),
-					)
+					// Context has expired naturally
 				}
 			}
 			s.mu.Unlock()
@@ -112,4 +101,11 @@ func (s *memoryContextCache[M]) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.contexts)
+}
+
+// Clear removes all contexts from the cache
+func (s *memoryContextCache[M]) Clear() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.contexts = make(map[string]*Context[M])
 }

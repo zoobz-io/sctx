@@ -12,8 +12,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/zoobzio/zlog"
 )
 
 var (
@@ -155,9 +153,10 @@ func (c *Context[M]) Clone() *Context[M] {
 
 // tokenPayload represents the wire format of a session token
 type tokenPayload struct {
-	Fingerprint string    `json:"f"` // Certificate fingerprint
-	Expiry      time.Time `json:"e"` // Token expiry
-	Nonce       string    `json:"n"` // Random nonce for uniqueness
+	Fingerprint string    `json:"f"`           // Certificate fingerprint
+	IssuedAt    time.Time `json:"i,omitempty"` // When token was issued (omitempty for backward compat)
+	Expiry      time.Time `json:"e"`           // Token expiry
+	Nonce       string    `json:"n"`           // Random nonce for uniqueness
 }
 
 // encodeAndSign creates a signed session token from a payload
@@ -189,9 +188,7 @@ func verifyTokenPayload(token SignedToken, publicKey crypto.PublicKey) (*tokenPa
 	// Split token into payload and signature
 	parts := strings.Split(string(token), ":")
 	if len(parts) != 2 {
-		zlog.Emit(TOKEN_REJECTED, "Token verification failed - invalid format",
-			zlog.String("reason", "malformed_token"),
-		)
+		// Token verification failed - invalid format
 		return nil, ErrInvalidContext
 	}
 
@@ -225,10 +222,7 @@ func verifyTokenPayload(token SignedToken, publicKey crypto.PublicKey) (*tokenPa
 
 	// Verify signature
 	if !signer.Verify(payloadBytes, signatureBytes, publicKey) {
-		zlog.Emit(TOKEN_REJECTED, "Token verification failed - invalid signature",
-			zlog.String("reason", "signature_verification_failed"),
-			zlog.String("algorithm", string(algorithm)),
-		)
+		// Token verification failed - invalid signature
 		return nil, ErrInvalidSignature
 	}
 
@@ -240,19 +234,11 @@ func verifyTokenPayload(token SignedToken, publicKey crypto.PublicKey) (*tokenPa
 
 	// Check expiration
 	if time.Now().After(payload.Expiry) {
-		zlog.Emit(TOKEN_REJECTED, "Token verification failed - expired",
-			zlog.String("reason", "expired"),
-			zlog.String("fingerprint", payload.Fingerprint),
-			zlog.Time("expired_at", payload.Expiry),
-		)
+		// Token verification failed - expired
 		return nil, ErrExpiredContext
 	}
 
-	// Successful verification
-	zlog.Emit(TOKEN_VERIFIED, "Token successfully verified",
-		zlog.String("fingerprint", payload.Fingerprint),
-		zlog.String("algorithm", string(algorithm)),
-	)
+	// Token successfully verified
 
 	return &payload, nil
 }
@@ -368,4 +354,26 @@ func generateContextID() string {
 		panic(err) // This should never happen
 	}
 	return base64.URLEncoding.EncodeToString(b)
+}
+
+// DefaultContextPolicy provides a simple default policy that sets basic permissions and expiry
+func DefaultContextPolicy[M any]() ContextPolicy[M] {
+	return func(cert *x509.Certificate) (*Context[M], error) {
+		if cert == nil {
+			return nil, errors.New("certificate is required")
+		}
+		
+		// Create context with 1 hour expiry by default
+		var metadata M // Zero value of M
+		ctx := &Context[M]{
+			CertificateInfo:        extractCertificateInfo(cert),
+			CertificateFingerprint: getFingerprint(cert),
+			IssuedAt:               time.Now(),
+			ExpiresAt:              time.Now().Add(time.Hour),
+			Metadata:               metadata,
+			Permissions:            []string{}, // No permissions by default
+		}
+		
+		return ctx, nil
+	}
 }

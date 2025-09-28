@@ -161,13 +161,11 @@ func TestVerifyAssertion(t *testing.T) {
 	})
 }
 
-func TestAssertionProcessors(t *testing.T) {
+func TestAssertionValidationSteps(t *testing.T) {
 	cert, priv := createTestCertAndKey(t)
 	ctx := context.Background()
 
-	t.Run("verifySignatureProcessor", func(t *testing.T) {
-		processor := verifySignatureProcessor()
-
+	t.Run("verifySignatureStep", func(t *testing.T) {
 		t.Run("valid signature", func(t *testing.T) {
 			assertion, _ := CreateAssertion(priv, cert)
 			ac := &AssertionContext{
@@ -175,12 +173,9 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			result, err := processor.Process(ctx, ac)
+			err := verifySignatureStep(ctx, ac)
 			if err != nil {
 				t.Errorf("Expected no error, got %v", err)
-			}
-			if result != ac {
-				t.Error("Expected same context returned")
 			}
 		})
 
@@ -192,15 +187,14 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			_, err := processor.Process(ctx, ac)
+			err := verifySignatureStep(ctx, ac)
 			if err == nil {
 				t.Error("Expected error for invalid signature")
 			}
 		})
 	})
 
-	t.Run("checkExpirationProcessor", func(t *testing.T) {
-		processor := checkExpirationProcessor()
+	t.Run("checkExpirationStep", func(t *testing.T) {
 
 		t.Run("valid assertion", func(t *testing.T) {
 			assertion, _ := CreateAssertion(priv, cert)
@@ -209,12 +203,9 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			result, err := processor.Process(ctx, ac)
+			err := checkExpirationStep(ctx, ac)
 			if err != nil {
 				t.Errorf("Expected no error, got %v", err)
-			}
-			if result != ac {
-				t.Error("Expected same context returned")
 			}
 		})
 
@@ -227,7 +218,7 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			_, err := processor.Process(ctx, ac)
+			err := checkExpirationStep(ctx, ac)
 			if err == nil {
 				t.Error("Expected error for expired assertion")
 			}
@@ -242,7 +233,7 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			_, err := processor.Process(ctx, ac)
+			err := checkExpirationStep(ctx, ac)
 			if err == nil {
 				t.Error("Expected error for future issued assertion")
 			}
@@ -257,16 +248,14 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			_, err := processor.Process(ctx, ac)
+			err := checkExpirationStep(ctx, ac)
 			if err == nil {
 				t.Error("Expected error for assertion with long lifetime")
 			}
 		})
 	})
 
-	t.Run("matchFingerprintProcessor", func(t *testing.T) {
-		processor := matchFingerprintProcessor()
-
+	t.Run("matchFingerprintStep", func(t *testing.T) {
 		t.Run("matching fingerprint", func(t *testing.T) {
 			assertion, _ := CreateAssertion(priv, cert)
 			ac := &AssertionContext{
@@ -274,12 +263,9 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			result, err := processor.Process(ctx, ac)
+			err := matchFingerprintStep(ctx, ac)
 			if err != nil {
 				t.Errorf("Expected no error, got %v", err)
-			}
-			if result != ac {
-				t.Error("Expected same context returned")
 			}
 		})
 
@@ -292,16 +278,14 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			_, err := processor.Process(ctx, ac)
+			err := matchFingerprintStep(ctx, ac)
 			if err == nil {
 				t.Error("Expected error for mismatched fingerprint")
 			}
 		})
 	})
 
-	t.Run("validateClaimsProcessor", func(t *testing.T) {
-		processor := validateClaimsProcessor()
-
+	t.Run("validateClaimsStep", func(t *testing.T) {
 		t.Run("valid claims", func(t *testing.T) {
 			assertion, _ := CreateAssertion(priv, cert)
 			ac := &AssertionContext{
@@ -309,12 +293,9 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			result, err := processor.Process(ctx, ac)
+			err := validateClaimsStep(ctx, ac)
 			if err != nil {
 				t.Errorf("Expected no error, got %v", err)
-			}
-			if result != ac {
-				t.Error("Expected same context returned")
 			}
 		})
 
@@ -326,7 +307,7 @@ func TestAssertionProcessors(t *testing.T) {
 				Certificate: cert,
 			}
 
-			_, err := processor.Process(ctx, ac)
+			err := validateClaimsStep(ctx, ac)
 			if err == nil {
 				t.Error("Expected error for invalid purpose")
 			}
@@ -334,25 +315,53 @@ func TestAssertionProcessors(t *testing.T) {
 	})
 }
 
-func TestCreateAssertionProcessors(t *testing.T) {
-	processors := CreateAssertionProcessors[any]()
+func TestValidateAssertionIntegration(t *testing.T) {
+	resetAdminForTesting()
+	
+	cert, priv := createTestCertAndKey(t)
+	ctx := context.Background()
 
-	// Check all expected processors are present
-	expectedProcessors := []string{
-		ProcessorVerifySignature,
-		ProcessorCheckExpiration,
-		ProcessorMatchFingerprint,
-		ProcessorValidateClaims,
+	// Create admin service to test with nonce checking
+	_, adminKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
 	}
+	
+	certPool := x509.NewCertPool()
+	certPool.AddCert(cert)
+	
+	admin, err := NewAdminService[any](adminKey, certPool)
+	if err != nil {
+		t.Fatalf("Failed to create admin service: %v", err)
+	}
+	adminSvc := admin.(*adminService[any])
 
-	for _, name := range expectedProcessors {
-		if _, exists := processors[name]; !exists {
-			t.Errorf("Expected processor %s not found", name)
+	t.Run("valid assertion passes all checks", func(t *testing.T) {
+		assertion, _ := CreateAssertion(priv, cert)
+
+		err := ValidateAssertion(ctx, assertion, cert, adminSvc)
+		if err != nil {
+			t.Errorf("Expected valid assertion to pass, got: %v", err)
 		}
-	}
+	})
 
-	// Check no extra processors
-	if len(processors) != len(expectedProcessors) {
-		t.Errorf("Expected %d processors, got %d", len(expectedProcessors), len(processors))
-	}
+	t.Run("invalid signature fails", func(t *testing.T) {
+		assertion, _ := CreateAssertion(priv, cert)
+		assertion.Signature[0] ^= 0xFF
+
+		err := ValidateAssertion(ctx, assertion, cert, adminSvc)
+		if err == nil {
+			t.Error("Expected invalid signature to fail")
+		}
+	})
+
+	t.Run("expired assertion fails", func(t *testing.T) {
+		assertion, _ := CreateAssertion(priv, cert)
+		assertion.Claims.ExpiresAt = time.Now().Add(-time.Hour)
+
+		err := ValidateAssertion(ctx, assertion, cert, adminSvc)
+		if err == nil {
+			t.Error("Expected expired assertion to fail")
+		}
+	})
 }
