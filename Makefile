@@ -1,78 +1,94 @@
-.PHONY: test test-race coverage bench bench-all lint lint-fix check ci install-tools clean help
+.PHONY: test test-race test-integration test-bench test-all bench lint lint-fix coverage clean all help check ci install-tools
 
 # Default target
+all: test lint
+
+# Display help
 help:
-	@echo "Available commands:"
-	@echo "  make test          - Run tests"
-	@echo "  make test-race     - Run tests with race detector"
-	@echo "  make coverage      - Generate coverage report"
-	@echo "  make bench         - Run benchmarks"
-	@echo "  make bench-all     - Run all benchmarks with detailed output"
-	@echo "  make lint          - Run linters"
-	@echo "  make lint-fix      - Run linters with auto-fix"
-	@echo "  make check         - Run tests and linters"
-	@echo "  make ci            - Run full CI suite"
-	@echo "  make install-tools - Install development tools"
-	@echo "  make clean         - Clean generated files"
+	@echo "sctx Development Commands"
+	@echo "========================="
+	@echo ""
+	@echo "Testing & Quality:"
+	@echo "  make test             - Run unit tests with race detector"
+	@echo "  make test-race        - Run unit tests with race detector (alias)"
+	@echo "  make test-integration - Run integration tests"
+	@echo "  make test-bench       - Run performance benchmarks"
+	@echo "  make test-all         - Run all tests (unit + integration)"
+	@echo "  make bench            - Run benchmarks (legacy alias)"
+	@echo "  make lint             - Run linters"
+	@echo "  make lint-fix         - Run linters with auto-fix"
+	@echo "  make coverage         - Generate coverage report (HTML)"
+	@echo "  make check            - Run tests and lint (quick check)"
+	@echo "  make ci               - Full CI simulation (all tests + lint + coverage)"
+	@echo ""
+	@echo "Other:"
+	@echo "  make install-tools    - Install required development tools"
+	@echo "  make clean            - Clean generated files"
+	@echo "  make all              - Run tests and lint (default)"
 
-# Testing
+# Run tests with race detector
 test:
-	go test -v ./...
+	@echo "Running tests..."
+	@go test -tags=testing -v -race ./...
 
-test-race:
-	go test -v -race ./...
+# Alias for test
+test-race: test
 
+# Run integration tests
+test-integration:
+	@echo "Running integration tests..."
+	@go test -tags=integration,testing -v ./testing/integration/...
 
+# Run benchmarks
+test-bench:
+	@echo "Running benchmarks..."
+	@go test -tags=testing -v -bench=. -benchmem ./testing/benchmarks/...
+
+# Run all tests (unit + integration)
+test-all: test test-integration
+	@echo "All tests passed!"
+
+# Run benchmarks (legacy alias)
+bench:
+	@echo "Running benchmarks..."
+	@go test -tags=testing -bench=. -benchmem -benchtime=1s ./...
+
+# Run linters
+lint:
+	@echo "Running linters..."
+	@golangci-lint run --config=.golangci.yml --timeout=5m
+
+# Run linters with auto-fix
+lint-fix:
+	@echo "Running linters with auto-fix..."
+	@golangci-lint run --config=.golangci.yml --timeout=5m --fix
+
+# Generate coverage report
 coverage:
-	go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
-	go tool cover -html=coverage.txt -o coverage.html
+	@echo "Generating coverage report..."
+	@go test -tags=testing -coverprofile=coverage.out -race ./...
+	@go tool cover -html=coverage.out -o coverage.html
+	@go tool cover -func=coverage.out | tail -1
 	@echo "Coverage report generated: coverage.html"
 
-# Benchmarking
-bench:
-	go test -bench=. -benchmem -run=^$ ./...
+# Clean generated files
+clean:
+	@echo "Cleaning..."
+	@rm -f coverage.out coverage.html coverage.txt
+	@rm -f benchmark_results.txt
+	@find . -name "*.test" -delete
+	@find . -name "*.prof" -delete
+	@find . -name "*.out" -delete
 
-bench-all:
-	go test -bench=. -benchmem -benchtime=10s -run=^$ ./... | tee benchmark_results.txt
-
-# Linting
-lint:
-	golangci-lint run --config=.golangci.yml --timeout=5m
-
-lint-fix:
-	golangci-lint run --config=.golangci.yml --timeout=5m --fix
-
-# Combined checks
-check: test lint
-
-# Full CI run
-ci: clean
-	@echo "Running full CI suite..."
-	@echo "1. Running tests with race detector..."
-	@$(MAKE) test-race
-	@echo ""
-	@echo "2. Running linters..."
-	@$(MAKE) lint
-	@echo ""
-	@echo "3. Running benchmarks..."
-	@$(MAKE) bench
-	@echo ""
-	@echo "4. Generating coverage..."
-	@$(MAKE) coverage
-	@echo ""
-	@echo "✅ CI suite completed successfully!"
-
-# Tools installation
+# Install development tools
 install-tools:
 	@echo "Installing development tools..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
-	@echo "✅ Tools installed successfully!"
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 
-# Cleanup
-clean:
-	rm -f coverage.txt coverage.html
-	rm -f benchmark_results.txt
-	find . -name "*.test" -delete
-	find . -name "*.out" -delete
-	go clean -cache
+# Quick check - run tests and lint
+check: test lint
+	@echo "All checks passed!"
 
+# CI simulation - what CI runs locally
+ci: clean lint test test-integration coverage
+	@echo "Full CI simulation complete!"

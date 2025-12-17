@@ -37,7 +37,7 @@ jobs:
       run: go mod download
       
     - name: Run unit tests with race detection
-      run: go test -v -race -timeout=5m ./...
+      run: go test -tags=testing -v -race -timeout=5m ./...
 
   # Benchmarks - performance regression detection
   benchmarks:

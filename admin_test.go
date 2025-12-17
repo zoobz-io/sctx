@@ -2,12 +2,16 @@ package sctx
 
 import (
 	"context"
+	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math/big"
+	"net"
 	"slices"
 	"strings"
 	"testing"
@@ -130,7 +134,7 @@ func TestAdminServiceBasicOperations(t *testing.T) {
 
 		// Verify context is cached
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		ctx, exists := admin.GetContext(fingerprint)
+		ctx, exists := admin.GetContext(context.Background(), fingerprint)
 		if !exists {
 			t.Fatal("Context should exist in cache")
 		}
@@ -152,7 +156,7 @@ func TestAdminServiceBasicOperations(t *testing.T) {
 		}
 
 		// Decrypt token to verify it points to the right context
-		gotFingerprint, err := admin.decryptToken(token)
+		gotFingerprint, err := admin.decryptToken(context.Background(), token)
 		if err != nil {
 			t.Fatalf("Failed to decrypt token: %v", err)
 		}
@@ -174,19 +178,19 @@ func TestAdminServiceBasicOperations(t *testing.T) {
 		fingerprint := getFingerprint(testCerts.ClientCert)
 
 		// Revoke the context
-		err = admin.RevokeByFingerprint(fingerprint)
+		err = admin.RevokeByFingerprint(context.Background(), fingerprint)
 		if err != nil {
 			t.Fatalf("Failed to revoke: %v", err)
 		}
 
 		// Verify context is gone
-		_, exists := admin.GetContext(fingerprint)
+		_, exists := admin.GetContext(context.Background(), fingerprint)
 		if exists {
 			t.Fatal("Context should not exist after revocation")
 		}
 
 		// Token should now be invalid
-		_, err = admin.decryptToken(token)
+		_, err = admin.decryptToken(context.Background(), token)
 		if err != nil {
 			// Token decryption still works, but context lookup will fail
 			t.Logf("Token decryption error (expected): %v", err)
@@ -216,8 +220,8 @@ func TestAdminServiceBasicOperations(t *testing.T) {
 		}
 
 		// But they should point to the same context
-		fp1, _ := admin.decryptToken(token1)
-		fp2, _ := admin.decryptToken(token2)
+		fp1, _ := admin.decryptToken(context.Background(), token1)
+		fp2, _ := admin.decryptToken(context.Background(), token2)
 		if fp1 != fp2 {
 			t.Error("Both tokens should reference the same context")
 		}
@@ -303,7 +307,7 @@ func TestAdminServiceCertificateValidation(t *testing.T) {
 
 }
 
-// TestAdminPublicKeyAndAlgorithm tests PublicKey and Algorithm methods
+// TestAdminPublicKeyAndAlgorithm tests PublicKey and Algorithm methods.
 func TestAdminPublicKeyAndAlgorithm(t *testing.T) {
 	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
@@ -355,7 +359,7 @@ func TestAdminPublicKeyAndAlgorithm(t *testing.T) {
 	})
 }
 
-// TestAdminActiveCount tests the ActiveCount method
+// TestAdminActiveCount tests the ActiveCount method.
 func TestAdminActiveCount(t *testing.T) {
 	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
@@ -410,7 +414,7 @@ func TestAdminActiveCount(t *testing.T) {
 	}
 }
 
-// TestAdminCustomPolicy tests using a custom policy function
+// TestAdminCustomPolicy tests using a custom policy function.
 func TestAdminCustomPolicy(t *testing.T) {
 	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
@@ -448,7 +452,7 @@ func TestAdminCustomPolicy(t *testing.T) {
 
 	// Verify the permission was added
 	fingerprint := getFingerprint(testCerts.ClientCert)
-	ctx, exists := adminSvc.cache.Get(fingerprint)
+	ctx, exists := adminSvc.cache.Get(context.Background(), fingerprint)
 	if !exists {
 		t.Fatal("Context not found in cache")
 	}
@@ -458,7 +462,7 @@ func TestAdminCustomPolicy(t *testing.T) {
 	}
 }
 
-// TestAdminSetCache tests the SetCache method
+// TestAdminSetCache tests the SetCache method.
 func TestAdminSetCache(t *testing.T) {
 	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
@@ -502,7 +506,7 @@ func TestAdminSetCache(t *testing.T) {
 	}
 }
 
-// TestAdminPolicyReturnsError tests when policy returns an error
+// TestAdminPolicyReturnsError tests when policy returns an error.
 func TestAdminPolicyReturnsError(t *testing.T) {
 	resetAdminForTesting()
 	testCerts := GenerateTestCertificates(t)
@@ -510,7 +514,7 @@ func TestAdminPolicyReturnsError(t *testing.T) {
 	admin, _ := NewAdminService[any](privateKey, testCerts.CertPool)
 
 	// Set a policy that returns an error
-	err := admin.SetPolicy(func(cert *x509.Certificate) (*Context[any], error) {
+	err := admin.SetPolicy(func(_ *x509.Certificate) (*Context[any], error) {
 		return nil, errors.New("policy error")
 	})
 	if err != nil {
@@ -579,51 +583,51 @@ func TestBasicPolicyFunction(t *testing.T) {
 	}
 }
 
-// TestCrossServiceTokenValidation tests how tokens and guards behave across different admin instances
+// TestCrossServiceTokenValidation tests how tokens and guards behave across different admin instances.
 func TestCrossServiceTokenValidation(t *testing.T) {
 	// This test explores whether tokens from one admin service can be validated by guards from another
 	// This scenario could happen when different microservices each have their own admin instance
-	
+
 	t.Run("SingletonEnforcement", func(t *testing.T) {
 		resetAdminForTesting()
-		
+
 		// Generate test certificates and keys
 		testCerts := GenerateTestCertificates(t)
 		_, privateKey1, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			t.Fatalf("Failed to generate key1: %v", err)
 		}
-		
+
 		// Create first admin service
 		admin1, err := NewAdminService[any](privateKey1, testCerts.CertPool)
 		if err != nil {
 			t.Fatalf("Failed to create first admin service: %v", err)
 		}
-		
+
 		// Try to create second admin service - should fail due to singleton
 		_, privateKey2, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			t.Fatalf("Failed to generate key2: %v", err)
 		}
-		
+
 		admin2, err := NewAdminService[any](privateKey2, testCerts.CertPool)
-		if err != ErrAdminAlreadyCreated {
+		if !errors.Is(err, ErrAdminAlreadyCreated) {
 			t.Errorf("Expected ErrAdminAlreadyCreated, got: %v", err)
 		}
 		if admin2 != nil {
 			t.Error("Second admin instance should be nil")
 		}
-		
+
 		// First admin should still work
 		if admin1 == nil {
 			t.Fatal("First admin should not be nil")
 		}
 	})
-	
+
 	t.Run("SimulatedCrossServiceScenario", func(t *testing.T) {
 		// Simulate what would happen if services with different admin instances tried to interact
 		// This requires testing cache isolation and token portability
-		
+
 		// Service A setup
 		resetAdminForTesting()
 		testCertsA := GenerateTestCertificates(t)
@@ -632,7 +636,7 @@ func TestCrossServiceTokenValidation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create admin A: %v", err)
 		}
-		
+
 		// Configure admin A
 		err = adminA.SetPolicy(func(cert *x509.Certificate) (*Context[any], error) {
 			return &Context[any]{
@@ -646,33 +650,33 @@ func TestCrossServiceTokenValidation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to set policy: %v", err)
 		}
-		
+
 		// Generate token from admin A
 		assertionA := createTestAssertion(t, testCertsA.ClientKey, testCertsA.ClientCert)
 		tokenA, err := adminA.Generate(context.Background(), testCertsA.ClientCert, assertionA)
 		if err != nil {
 			t.Fatalf("Failed to generate token A: %v", err)
 		}
-		
+
 		// Create guard from admin A
 		adminA.SetGuardCreationPermissions([]string{"create-guard"})
 		guardA, err := adminA.CreateGuard(context.Background(), tokenA, "read")
 		if err != nil {
 			t.Fatalf("Failed to create guard A: %v", err)
 		}
-		
+
 		// Validate token with its own guard - should work
 		if err := guardA.Validate(context.Background(), tokenA); err != nil {
 			t.Errorf("Guard A should validate token A: %v", err)
 		}
-		
+
 		// Now simulate Service B trying to use the same infrastructure
 		// In real scenario, this would be a different process with its own admin
 		// but due to singleton, we can't create another admin in same process
-		
+
 		// Instead, let's test what happens with different CA pools
 		testCertsB := GenerateTestCertificatesWithDifferentCA(t)
-		
+
 		// Try to validate a token from a different certificate chain
 		assertionB := createTestAssertion(t, testCertsB.ClientKey, testCertsB.ClientCert)
 		_, err = adminA.Generate(context.Background(), testCertsB.ClientCert, assertionB)
@@ -680,21 +684,21 @@ func TestCrossServiceTokenValidation(t *testing.T) {
 			t.Error("Should not be able to generate token for certificate from different CA")
 		}
 	})
-	
+
 	t.Run("CacheIsolationBetweenAdmins", func(t *testing.T) {
 		// Test that cache is tied to admin instance
 		resetAdminForTesting()
 		testCerts := GenerateTestCertificates(t)
 		_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
-		
+
 		admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
 		if err != nil {
 			t.Fatalf("Failed to create admin: %v", err)
 		}
-		
+
 		// Cast to access internal methods
 		adminImpl := admin.(*adminService[any])
-		
+
 		// Configure and generate token
 		err = admin.SetPolicy(func(cert *x509.Certificate) (*Context[any], error) {
 			return &Context[any]{
@@ -708,54 +712,54 @@ func TestCrossServiceTokenValidation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to set policy: %v", err)
 		}
-		
+
 		assertion := createTestAssertion(t, testCerts.ClientKey, testCerts.ClientCert)
 		token, err := admin.Generate(context.Background(), testCerts.ClientCert, assertion)
 		if err != nil {
 			t.Fatalf("Failed to generate token: %v", err)
 		}
-		
+
 		// Check cache has the context
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		ctx, exists := adminImpl.GetContext(fingerprint)
+		ctx, exists := adminImpl.GetContext(context.Background(), fingerprint)
 		if !exists || ctx == nil {
 			t.Fatal("Context should exist in cache")
 		}
-		
+
 		// Each admin has its own cache instance
 		if adminImpl.ActiveCount() != 1 {
 			t.Errorf("Expected 1 active context, got %d", adminImpl.ActiveCount())
 		}
-		
+
 		// Token validation depends on cache lookup
 		guard, err := admin.CreateGuard(context.Background(), token, "read")
 		if err != nil {
 			t.Fatalf("Failed to create guard: %v", err)
 		}
-		
+
 		// Remove from cache
-		adminImpl.RevokeByFingerprint(fingerprint)
-		
+		adminImpl.RevokeByFingerprint(context.Background(), fingerprint)
+
 		// Guard validation should now fail
 		if err := guard.Validate(context.Background(), token); err == nil {
 			t.Error("Guard should fail to validate token after context revoked")
 		}
 	})
-	
+
 	t.Run("TokenCryptoBinding", func(t *testing.T) {
 		// Test that tokens are cryptographically bound to the admin that created them
 		resetAdminForTesting()
 		testCerts := GenerateTestCertificates(t)
-		
+
 		// Create admin with specific key
 		_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 		admin, err := NewAdminService[any](privateKey, testCerts.CertPool)
 		if err != nil {
 			t.Fatalf("Failed to create admin: %v", err)
 		}
-		
+
 		adminImpl := admin.(*adminService[any])
-		
+
 		// Configure admin
 		err = admin.SetPolicy(func(cert *x509.Certificate) (*Context[any], error) {
 			return &Context[any]{
@@ -769,48 +773,195 @@ func TestCrossServiceTokenValidation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to set policy: %v", err)
 		}
-		
+
 		// Generate token
 		assertion := createTestAssertion(t, testCerts.ClientKey, testCerts.ClientCert)
 		token, err := admin.Generate(context.Background(), testCerts.ClientCert, assertion)
 		if err != nil {
 			t.Fatalf("Failed to generate token: %v", err)
 		}
-		
+
 		// Token can be decrypted by same admin
-		fingerprint, err := adminImpl.decryptToken(token)
+		fingerprint, err := adminImpl.decryptToken(context.Background(), token)
 		if err != nil {
 			t.Errorf("Should be able to decrypt own token: %v", err)
 		}
 		if fingerprint == "" {
 			t.Error("Fingerprint should not be empty")
 		}
-		
+
 		// Simulate trying to verify with different public key
 		// This tests that tokens are bound to the admin's key pair
 		_, differentPrivateKey, _ := ed25519.GenerateKey(rand.Reader)
 		differentPublicKey := differentPrivateKey.Public()
-		
+
 		// Try to verify token with different public key
 		_, err = verifyTokenPayload(token, differentPublicKey)
 		if err == nil {
 			t.Error("Should not be able to verify token with different public key")
 		}
-		if err != ErrInvalidSignature {
+		if !errors.Is(err, ErrInvalidSignature) {
 			t.Errorf("Expected ErrInvalidSignature, got: %v", err)
 		}
 	})
 }
 
-// GenerateTestCertificatesWithDifferentCA generates test certificates with a different CA
+// TestCertificates holds test PKI materials.
+type TestCertificates struct {
+	RootCA     *x509.Certificate
+	RootCAKey  ed25519.PrivateKey
+	ClientCert *x509.Certificate
+	ClientKey  ed25519.PrivateKey
+	CertPool   *x509.CertPool
+}
+
+// GenerateTestCertificates creates a complete test PKI with root CA and client cert.
+func GenerateTestCertificates(t *testing.T) *TestCertificates {
+	t.Helper()
+	// Generate Root CA
+	rootPub, rootKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate root key: %v", err)
+	}
+
+	rootTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization:  []string{"Test CA"},
+			Country:       []string{"US"},
+			Province:      []string{""},
+			Locality:      []string{""},
+			StreetAddress: []string{""},
+			PostalCode:    []string{""},
+		},
+		NotBefore:             time.Now().Add(-24 * time.Hour),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageAny},
+	}
+
+	rootCertDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, rootPub, rootKey)
+	if err != nil {
+		t.Fatalf("Failed to create root certificate: %v", err)
+	}
+
+	rootCert, err := x509.ParseCertificate(rootCertDER)
+	if err != nil {
+		t.Fatalf("Failed to parse root certificate: %v", err)
+	}
+
+	// Generate Client Certificate
+	clientPub, clientKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate client key: %v", err)
+	}
+
+	clientTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject: pkix.Name{
+			Organization:       []string{"Test Client"},
+			OrganizationalUnit: []string{"Engineering", "Security"},
+			CommonName:         "test-client",
+			Country:            []string{"US"},
+			Province:           []string{"CA"},
+			Locality:           []string{"San Francisco"},
+			StreetAddress:      []string{"123 Test St"},
+			PostalCode:         []string{"94102"},
+		},
+		NotBefore:      time.Now().Add(-24 * time.Hour),
+		NotAfter:       time.Now().Add(90 * 24 * time.Hour),
+		KeyUsage:       x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageAny},
+		DNSNames:       []string{"test.example.com", "*.test.example.com"},
+		EmailAddresses: []string{"test@example.com", "admin@example.com"},
+		IPAddresses:    []net.IP{net.IPv4(192, 168, 1, 1), net.IPv4(10, 0, 0, 1)},
+	}
+
+	clientCertDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, rootCert, clientPub, rootKey)
+	if err != nil {
+		t.Fatalf("Failed to create client certificate: %v", err)
+	}
+
+	clientCert, err := x509.ParseCertificate(clientCertDER)
+	if err != nil {
+		t.Fatalf("Failed to parse client certificate: %v", err)
+	}
+
+	// Create certificate pool with root CA
+	certPool := x509.NewCertPool()
+	certPool.AddCert(rootCert)
+
+	return &TestCertificates{
+		RootCA:     rootCert,
+		RootCAKey:  rootKey,
+		ClientCert: clientCert,
+		ClientKey:  clientKey,
+		CertPool:   certPool,
+	}
+}
+
+// GenerateAdditionalClientCert generates an additional client certificate signed by the provided CA.
+func GenerateAdditionalClientCert(t *testing.T, testCerts *TestCertificates, commonName string) (*x509.Certificate, ed25519.PrivateKey) {
+	t.Helper()
+
+	// Generate Client Key
+	clientPub, clientKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate client key: %v", err)
+	}
+
+	// Create unique serial number
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("Failed to generate serial number: %v", err)
+	}
+
+	clientTemplate := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization:       []string{"Test Client"},
+			OrganizationalUnit: []string{"Engineering"},
+			CommonName:         commonName,
+		},
+		NotBefore:   time.Now().Add(-24 * time.Hour),
+		NotAfter:    time.Now().Add(90 * 24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageAny},
+	}
+
+	clientCertDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, testCerts.RootCA, clientPub, testCerts.RootCAKey)
+	if err != nil {
+		t.Fatalf("Failed to create client certificate: %v", err)
+	}
+
+	clientCert, err := x509.ParseCertificate(clientCertDER)
+	if err != nil {
+		t.Fatalf("Failed to parse client certificate: %v", err)
+	}
+
+	return clientCert, clientKey
+}
+
+// createTestAssertion is a test helper to create assertions.
+func createTestAssertion(t *testing.T, privateKey crypto.PrivateKey, cert *x509.Certificate) SignedAssertion {
+	assertion, err := CreateAssertion(privateKey, cert)
+	if err != nil {
+		t.Fatalf("Failed to create assertion: %v", err)
+	}
+	return assertion
+}
+
+// GenerateTestCertificatesWithDifferentCA generates test certificates with a different CA.
 func GenerateTestCertificatesWithDifferentCA(t *testing.T) *TestCertificates {
 	// This is a simplified version - in real tests you'd generate a completely different CA chain
 	certs := GenerateTestCertificates(t)
-	
+
 	// Create a new CA pool without the original CA
 	newPool := x509.NewCertPool()
 	// Don't add the original CA cert
-	
+
 	return &TestCertificates{
 		RootCA:     certs.RootCA,
 		RootCAKey:  certs.RootCAKey,
@@ -951,7 +1102,7 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Revoke a context (should trigger cleanup)
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		err = adminSvc.RevokeByFingerprint(fingerprint)
+		err = adminSvc.RevokeByFingerprint(context.Background(), fingerprint)
 		if err != nil {
 			t.Fatalf("Failed to revoke: %v", err)
 		}
@@ -990,7 +1141,7 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Perform read operations (should NOT trigger cleanup)
 		_ = guard.Validate(context.Background(), token)
-		_, _ = adminSvc.GetContext(getFingerprint(testCerts.ClientCert))
+		_, _ = adminSvc.GetContext(context.Background(), getFingerprint(testCerts.ClientCert))
 
 		// Verify expired nonce is still there
 		adminSvc.nonceMu.Lock()
@@ -1081,31 +1232,31 @@ func TestTokenIssuedAt(t *testing.T) {
 
 	t.Run("new tokens include IssuedAt", func(t *testing.T) {
 		beforeGeneration := time.Now()
-		
+
 		// Generate token
 		assertion := createTestAssertion(t, testCerts.ClientKey, testCerts.ClientCert)
 		token, err := admin.Generate(context.Background(), testCerts.ClientCert, assertion)
 		if err != nil {
 			t.Fatalf("Failed to generate token: %v", err)
 		}
-		
+
 		afterGeneration := time.Now()
 
 		// Decode token to check IssuedAt
 		payload := extractTokenPayload(t, token)
-		
+
 		if payload.IssuedAt.IsZero() {
 			t.Error("IssuedAt should not be zero")
 		}
-		
+
 		if payload.IssuedAt.Before(beforeGeneration) || payload.IssuedAt.After(afterGeneration) {
-			t.Errorf("IssuedAt %v should be between %v and %v", 
+			t.Errorf("IssuedAt %v should be between %v and %v",
 				payload.IssuedAt, beforeGeneration, afterGeneration)
 		}
-		
+
 		// Verify IssuedAt is before Expiry
 		if !payload.IssuedAt.Before(payload.Expiry) {
-			t.Errorf("IssuedAt %v should be before Expiry %v", 
+			t.Errorf("IssuedAt %v should be before Expiry %v",
 				payload.IssuedAt, payload.Expiry)
 		}
 	})
@@ -1113,7 +1264,7 @@ func TestTokenIssuedAt(t *testing.T) {
 	t.Run("backward compatibility with old tokens", func(t *testing.T) {
 		// Create admin service to get signer
 		adminSvc := admin.(*adminService[any])
-		
+
 		// Create an old-style token without IssuedAt
 		oldPayload := &tokenPayload{
 			Fingerprint: "test-fingerprint",
@@ -1121,23 +1272,23 @@ func TestTokenIssuedAt(t *testing.T) {
 			Nonce:       "test-nonce",
 			// IssuedAt intentionally omitted
 		}
-		
+
 		oldToken, err := encodeAndSign(oldPayload, adminSvc.signer)
 		if err != nil {
 			t.Fatalf("Failed to create old token: %v", err)
 		}
-		
+
 		// Verify old token can still be parsed
 		verifiedPayload, err := verifyTokenPayload(oldToken, adminSvc.publicKey)
 		if err != nil {
 			t.Fatalf("Failed to verify old token: %v", err)
 		}
-		
+
 		// Old tokens should have zero IssuedAt
 		if !verifiedPayload.IssuedAt.IsZero() {
 			t.Errorf("Old token should have zero IssuedAt, got %v", verifiedPayload.IssuedAt)
 		}
-		
+
 		// Other fields should still work
 		if verifiedPayload.Fingerprint != "test-fingerprint" {
 			t.Errorf("Fingerprint mismatch: got %s", verifiedPayload.Fingerprint)
@@ -1151,29 +1302,29 @@ func TestTokenIssuedAt(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to generate token: %v", err)
 		}
-		
+
 		// Extract and decode the JSON payload
 		parts := strings.Split(string(token), ":")
 		if len(parts) != 2 {
 			t.Fatalf("Invalid token format")
 		}
-		
+
 		payloadBytes, err := base64.URLEncoding.DecodeString(parts[0])
 		if err != nil {
 			t.Fatalf("Failed to decode payload: %v", err)
 		}
-		
+
 		// Check JSON structure
 		var jsonMap map[string]interface{}
 		if err := json.Unmarshal(payloadBytes, &jsonMap); err != nil {
 			t.Fatalf("Failed to unmarshal JSON: %v", err)
 		}
-		
+
 		// Verify IssuedAt field exists in JSON
 		if _, exists := jsonMap["i"]; !exists {
 			t.Error("IssuedAt field 'i' should exist in JSON")
 		}
-		
+
 		// Verify all expected fields
 		expectedFields := []string{"f", "i", "e", "n"}
 		for _, field := range expectedFields {
@@ -1190,50 +1341,50 @@ func TestTokenIssuedAt(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to generate token: %v", err)
 		}
-		
+
 		// Sleep briefly to ensure token has age
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Verify token and check age
 		adminSvc := admin.(*adminService[any])
 		payload, err := verifyTokenPayload(token, adminSvc.publicKey)
 		if err != nil {
 			t.Fatalf("Failed to verify token: %v", err)
 		}
-		
+
 		tokenAge := time.Since(payload.IssuedAt)
 		if tokenAge < 100*time.Millisecond {
 			t.Errorf("Token age %v should be at least 100ms", tokenAge)
 		}
-		
+
 		// Token age should be less than expiry duration
 		expiryDuration := payload.Expiry.Sub(payload.IssuedAt)
 		if tokenAge >= expiryDuration {
-			t.Errorf("Token age %v should be less than expiry duration %v", 
+			t.Errorf("Token age %v should be less than expiry duration %v",
 				tokenAge, expiryDuration)
 		}
 	})
 }
 
-// Helper function to extract token payload for testing
+// Helper function to extract token payload for testing.
 func extractTokenPayload(t *testing.T, token SignedToken) *tokenPayload {
 	t.Helper()
-	
+
 	parts := strings.Split(string(token), ":")
 	if len(parts) != 2 {
 		t.Fatalf("Invalid token format")
 	}
-	
+
 	payloadBytes, err := base64.URLEncoding.DecodeString(parts[0])
 	if err != nil {
 		t.Fatalf("Failed to decode payload: %v", err)
 	}
-	
+
 	var payload tokenPayload
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		t.Fatalf("Failed to unmarshal payload: %v", err)
 	}
-	
+
 	return &payload
 }
 
@@ -1259,21 +1410,21 @@ func TestTokenIssuedAtAuditability(t *testing.T) {
 	// Track token generation times
 	var tokens []SignedToken
 	var generationTimes []time.Time
-	
+
 	// Generate multiple tokens over time
 	for i := 0; i < 3; i++ {
 		generationTimes = append(generationTimes, time.Now())
-		
+
 		assertion := createTestAssertion(t, testCerts.ClientKey, testCerts.ClientCert)
 		token, errGen := admin.Generate(context.Background(), testCerts.ClientCert, assertion)
 		if errGen != nil {
 			t.Fatalf("Failed to generate token %d: %v", i, errGen)
 		}
 		tokens = append(tokens, token)
-		
+
 		time.Sleep(50 * time.Millisecond)
 	}
-	
+
 	// Verify we can audit when each token was created
 	adminSvc := admin.(*adminService[any])
 	for i, token := range tokens {
@@ -1281,13 +1432,13 @@ func TestTokenIssuedAtAuditability(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to verify token %d: %v", i, err)
 		}
-		
+
 		// Each token should have been issued around its generation time
 		timeDiff := payload.IssuedAt.Sub(generationTimes[i]).Abs()
 		if timeDiff > 10*time.Millisecond {
 			t.Errorf("Token %d IssuedAt differs from generation time by %v", i, timeDiff)
 		}
-		
+
 		// Tokens should have increasing IssuedAt times
 		if i > 0 {
 			prevPayload, _ := verifyTokenPayload(tokens[i-1], adminSvc.publicKey)
@@ -1298,7 +1449,7 @@ func TestTokenIssuedAtAuditability(t *testing.T) {
 	}
 }
 
-// UserMetadata represents custom user information
+// UserMetadata represents custom user information.
 type UserMetadata struct {
 	UserID   string
 	Email    string
@@ -1328,7 +1479,7 @@ func TestTypedMetadataPolicy(t *testing.T) {
 		// Extract user information from certificate
 		metadata := UserMetadata{
 			UserID:   cert.Subject.CommonName,
-			Email:    "", // Could extract from cert.EmailAddresses if available
+			Email:    "",               // Could extract from cert.EmailAddresses if available
 			Roles:    []string{"user"}, // Could derive from cert organization
 			TenantID: "default",
 		}
@@ -1367,7 +1518,7 @@ func TestTypedMetadataPolicy(t *testing.T) {
 	// Access the typed admin service to check metadata
 	adminSvc := admin.(*adminService[UserMetadata])
 	fingerprint := getFingerprint(testCerts.ClientCert)
-	ctx, exists := adminSvc.GetContext(fingerprint)
+	ctx, exists := adminSvc.GetContext(context.Background(), fingerprint)
 	if !exists {
 		t.Fatal("Context not found")
 	}
@@ -1384,7 +1535,7 @@ func TestTypedMetadataPolicy(t *testing.T) {
 	}
 }
 
-// Helper function
+// Helper function.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && s[:len(substr)] == substr || len(s) > len(substr) && contains(s[1:], substr)
 }

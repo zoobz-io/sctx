@@ -376,7 +376,7 @@ func TestEd25519Signer(t *testing.T) {
 	})
 }
 
-// Test cross-algorithm scenarios
+// Test cross-algorithm scenarios.
 func TestCrossAlgorithmVerification(t *testing.T) {
 	// Generate keys for both algorithms
 	_, edPriv, _ := ed25519.GenerateKey(rand.Reader)

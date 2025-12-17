@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// TestRequireCertField tests the RequireCertField guard
+// TestRequireCertField tests the RequireCertField guard.
 func TestRequireCertField(t *testing.T) {
 	ctx := &Context[any]{
 		CertificateInfo: CertificateInfo{
@@ -48,7 +48,7 @@ func TestRequireCertField(t *testing.T) {
 	}
 }
 
-// TestRequireCertPattern tests the RequireCertPattern guard
+// TestRequireCertPattern tests the RequireCertPattern guard.
 func TestRequireCertPattern(t *testing.T) {
 	ctx := &Context[any]{
 		CertificateInfo: CertificateInfo{
@@ -92,7 +92,7 @@ func TestRequireCertPattern(t *testing.T) {
 	}
 }
 
-// TestExtractCertInfoField tests the extractCertInfoField function
+// TestExtractCertInfoField tests the extractCertInfoField function.
 func TestExtractCertInfoField(t *testing.T) {
 	certInfo := CertificateInfo{
 		CommonName:   "test.example.com",
@@ -131,7 +131,7 @@ func TestExtractCertInfoField(t *testing.T) {
 	}
 }
 
-// TestSetContextEdgeCases tests remaining edge cases in SetContext
+// TestSetContextEdgeCases tests remaining edge cases in SetContext.
 func TestSetContextEdgeCases(t *testing.T) {
 	ctx := &Context[any]{
 		Permissions: []string{"existing"},
@@ -158,7 +158,7 @@ func TestSetContextEdgeCases(t *testing.T) {
 	}
 }
 
-// TestGenerateGuardIDEdgeCases tests edge case in generateGuardID
+// TestGenerateGuardIDEdgeCases tests edge case in generateGuardID.
 func TestGenerateGuardIDEdgeCases(t *testing.T) {
 	// Test that IDs are unique
 	id1 := generateGuardID()
@@ -174,7 +174,7 @@ func TestGenerateGuardIDEdgeCases(t *testing.T) {
 	}
 }
 
-// TestHasPermissionEdgeCases verifies hasPermission is tested (already covered)
+// TestHasPermissionEdgeCases verifies hasPermission is tested (already covered).
 func TestHasPermissionEdgeCases(t *testing.T) {
 	// This is already tested through guard creation, but let's add explicit test
 	perms := []string{"read", "write", "admin"}
@@ -282,7 +282,7 @@ func TestGuardCreation(t *testing.T) {
 		// First revoke the existing context to clear cache
 		adminSvc := admin.(*adminService[any])
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		_ = adminSvc.cache.Delete(fingerprint)
+		_ = adminSvc.cache.Delete(context.Background(), fingerprint)
 
 		// Temporarily modify the policy to grant only read
 		err = admin.SetPolicy(func(cert *x509.Certificate) (*Context[any], error) {
@@ -335,7 +335,7 @@ func TestGuardCreation(t *testing.T) {
 		// Clear cache to ensure fresh token generation
 		adminSvc := admin.(*adminService[any])
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		_ = adminSvc.cache.Delete(fingerprint)
+		_ = adminSvc.cache.Delete(context.Background(), fingerprint)
 
 		// Set guard creation permissions
 		admin.SetGuardCreationPermissions([]string{"admin"})
@@ -359,7 +359,7 @@ func TestGuardCreation(t *testing.T) {
 
 		// To test without admin permission, modify the current admin's pipeline
 		fingerprint = getFingerprint(testCerts.ClientCert)
-		_ = adminSvc.cache.Delete(fingerprint)
+		_ = adminSvc.cache.Delete(context.Background(), fingerprint)
 
 		// Temporarily modify pipeline to not grant admin
 		// Store reference for cleanup (no longer needed with policies)
@@ -403,7 +403,7 @@ func TestGuardCreation(t *testing.T) {
 		// To test permission limitation, modify the current admin's pipeline
 		adminSvc := admin.(*adminService[any])
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		_ = adminSvc.cache.Delete(fingerprint)
+		_ = adminSvc.cache.Delete(context.Background(), fingerprint)
 
 		// Temporarily modify pipeline to grant only read
 		// Store reference for cleanup (no longer needed with policies)
@@ -444,7 +444,7 @@ func TestGuardCreation(t *testing.T) {
 		// To test expired token, modify existing context
 		adminSvc := admin.(*adminService[any])
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		_ = adminSvc.cache.Delete(fingerprint)
+		_ = adminSvc.cache.Delete(context.Background(), fingerprint)
 
 		// Create assertion
 		assertion := createTestAssertion(t, testCerts.ClientKey, testCerts.ClientCert)
@@ -456,9 +456,9 @@ func TestGuardCreation(t *testing.T) {
 		}
 
 		// Manually expire the context
-		ctx, _ := adminSvc.cache.Get(fingerprint)
+		ctx, _ := adminSvc.cache.Get(context.Background(), fingerprint)
 		ctx.ExpiresAt = ctx.IssuedAt // Expire immediately
-		adminSvc.cache.Store(fingerprint, ctx)
+		adminSvc.cache.Store(context.Background(), fingerprint, ctx)
 
 		// Try to create guard with expired token
 		_, err = admin.CreateGuard(context.Background(), token, "read")
@@ -549,9 +549,9 @@ func TestGuardValidation(t *testing.T) {
 		// Manually expire the context
 		adminSvc := admin.(*adminService[any])
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		ctx, _ := adminSvc.cache.Get(fingerprint)
+		ctx, _ := adminSvc.cache.Get(context.Background(), fingerprint)
 		ctx.ExpiresAt = ctx.IssuedAt // Expire immediately
-		adminSvc.cache.Store(fingerprint, ctx)
+		adminSvc.cache.Store(context.Background(), fingerprint, ctx)
 
 		err := guard.Validate(context.Background(), token)
 		if err == nil {
@@ -567,7 +567,7 @@ func TestGuardValidation(t *testing.T) {
 		// First clear the cache
 		adminSvc := admin.(*adminService[any])
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		_ = adminSvc.cache.Delete(fingerprint)
+		_ = adminSvc.cache.Delete(context.Background(), fingerprint)
 
 		// Temporarily modify pipeline
 		// Store reference for cleanup (no longer needed with policies)
@@ -677,7 +677,7 @@ func TestGuardCreatorBinding(t *testing.T) {
 		// Alice creates a guard
 		aliceAssertion, _ := CreateAssertion(alice.key, alice.cert)
 		aliceToken, _ := admin.Generate(context.Background(), alice.cert, aliceAssertion)
-		
+
 		guard, err := admin.CreateGuard(context.Background(), aliceToken, "read")
 		if err != nil {
 			t.Fatalf("Failed to create guard: %v", err)
@@ -694,7 +694,7 @@ func TestGuardCreatorBinding(t *testing.T) {
 		// Alice creates a guard
 		aliceAssertion, _ := CreateAssertion(alice.key, alice.cert)
 		aliceToken, _ := admin.Generate(context.Background(), alice.cert, aliceAssertion)
-		
+
 		guard, err := admin.CreateGuard(context.Background(), aliceToken, "read")
 		if err != nil {
 			t.Fatalf("Failed to create guard: %v", err)
@@ -703,7 +703,7 @@ func TestGuardCreatorBinding(t *testing.T) {
 		// Bob tries to use Alice's guard
 		bobAssertion, _ := CreateAssertion(bob.key, bob.cert)
 		bobToken, _ := admin.Generate(context.Background(), bob.cert, bobAssertion)
-		
+
 		err = guard.Validate(context.Background(), bobToken)
 		if err == nil {
 			t.Error("Non-creator should not be able to use someone else's guard")
@@ -717,7 +717,7 @@ func TestGuardCreatorBinding(t *testing.T) {
 		// Alice creates a guard
 		aliceAssertion, _ := CreateAssertion(alice.key, alice.cert)
 		aliceToken, _ := admin.Generate(context.Background(), alice.cert, aliceAssertion)
-		
+
 		guard, err := admin.CreateGuard(context.Background(), aliceToken, "read")
 		if err != nil {
 			t.Fatalf("Failed to create guard: %v", err)
@@ -752,7 +752,7 @@ func TestGuardCreatorBinding(t *testing.T) {
 		// Alice creates a guard
 		aliceAssertion, _ := CreateAssertion(alice.key, alice.cert)
 		aliceToken, _ := admin.Generate(context.Background(), alice.cert, aliceAssertion)
-		
+
 		guard, err := admin.CreateGuard(context.Background(), aliceToken, "read")
 		if err != nil {
 			t.Fatalf("Failed to create guard: %v", err)
@@ -761,7 +761,7 @@ func TestGuardCreatorBinding(t *testing.T) {
 		// Remove Alice's context from cache to simulate expiry
 		adminSvc := admin.(*adminService[any])
 		fingerprint := getFingerprint(alice.cert)
-		_ = adminSvc.cache.Delete(fingerprint)
+		_ = adminSvc.cache.Delete(context.Background(), fingerprint)
 
 		// Alice can no longer use her guard
 		err = guard.Validate(context.Background(), aliceToken)
@@ -787,14 +787,14 @@ func TestGuardCreatorBinding(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to set policy: %v", err)
 		}
-		
+
 		// Alice creates multiple guards
 		aliceAssertion, _ := CreateAssertion(alice.key, alice.cert)
 		aliceToken, err := admin.Generate(context.Background(), alice.cert, aliceAssertion)
 		if err != nil {
 			t.Fatalf("Failed to generate Alice token: %v", err)
 		}
-		
+
 		readGuard, err := admin.CreateGuard(context.Background(), aliceToken, "read")
 		if err != nil {
 			t.Fatalf("Failed to create read guard: %v", err)
@@ -822,7 +822,7 @@ func TestGuardCreatorBinding(t *testing.T) {
 		// Bob cannot use any of Alice's guards
 		bobAssertion, _ := CreateAssertion(bob.key, bob.cert)
 		bobToken, _ := admin.Generate(context.Background(), bob.cert, bobAssertion)
-		
+
 		for _, guard := range []Guard{readGuard, writeGuard, adminGuard} {
 			err := guard.Validate(context.Background(), bobToken)
 			if err == nil {
@@ -855,7 +855,7 @@ func TestGuardCreatorBinding(t *testing.T) {
 		// Alice gets a token (only has read permission)
 		aliceAssertion, _ := CreateAssertion(alice.key, alice.cert)
 		aliceToken, _ := admin.Generate(context.Background(), alice.cert, aliceAssertion)
-		
+
 		// Alice can create a read guard
 		_, err := admin.CreateGuard(context.Background(), aliceToken, "read")
 		if err != nil {
@@ -877,14 +877,14 @@ type clientCert struct {
 
 func createClientCert(t *testing.T, rootCert *x509.Certificate, rootKey ed25519.PrivateKey, cn string) clientCert {
 	t.Helper()
-	
+
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate key for %s: %v", cn, err)
 	}
 
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(int64(time.Now().UnixNano())),
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject: pkix.Name{
 			Organization: []string{"Test Client"},
 			CommonName:   cn,
@@ -979,7 +979,7 @@ func TestGuardDualTokenValidation(t *testing.T) {
 		// Generate multiple tokens
 		assertion2 := createTestAssertion(t, testCerts.ClientKey, testCerts.ClientCert)
 		token2, _ := admin.Generate(context.Background(), testCerts.ClientCert, assertion2)
-		
+
 		assertion3 := createTestAssertion(t, testCerts.ClientKey, testCerts.ClientCert)
 		token3, _ := admin.Generate(context.Background(), testCerts.ClientCert, assertion3)
 
@@ -991,7 +991,7 @@ func TestGuardDualTokenValidation(t *testing.T) {
 	})
 
 	t.Run("no tokens fails", func(t *testing.T) {
-		err := guard.Validate(context.Background(), )
+		err := guard.Validate(context.Background())
 		if err == nil {
 			t.Error("Validation with no tokens should fail")
 		}
@@ -1004,7 +1004,7 @@ func TestGuardDualTokenValidation(t *testing.T) {
 		// Create a token with limited permissions
 		adminSvc := admin.(*adminService[any])
 		fingerprint := getFingerprint(testCerts.ClientCert)
-		_ = adminSvc.cache.Delete(fingerprint)
+		_ = adminSvc.cache.Delete(context.Background(), fingerprint)
 
 		// Set policy with only read permission
 		err = admin.SetPolicy(func(cert *x509.Certificate) (*Context[any], error) {
@@ -1085,8 +1085,8 @@ func TestGuardValidationAfterDemotion(t *testing.T) {
 	// Simulate demotion by removing permissions from cached context
 	adminSvc := admin.(*adminService[any])
 	fingerprint := getFingerprint(testCerts.ClientCert)
-	ctx, _ := adminSvc.cache.Get(fingerprint)
-	
+	ctx, _ := adminSvc.cache.Get(context.Background(), fingerprint)
+
 	// Remove write permission (simulate demotion)
 	newPerms := []string{}
 	for _, perm := range ctx.Permissions {
@@ -1095,7 +1095,7 @@ func TestGuardValidationAfterDemotion(t *testing.T) {
 		}
 	}
 	ctx.Permissions = newPerms
-	adminSvc.cache.Store(fingerprint, ctx)
+	adminSvc.cache.Store(context.Background(), fingerprint, ctx)
 
 	t.Run("demoted user cannot self-validate", func(t *testing.T) {
 		// The same token now lacks write permission
@@ -1110,8 +1110,8 @@ func TestGuardValidationAfterDemotion(t *testing.T) {
 
 	t.Run("demoted user can still use guard to validate others", func(t *testing.T) {
 		// First restore the user's permissions and regenerate a fresh token with write permission
-		_ = adminSvc.cache.Delete(fingerprint)
-		
+		_ = adminSvc.cache.Delete(context.Background(), fingerprint)
+
 		// Generate fresh token for the other user
 		assertion2 := createTestAssertion(t, testCerts.ClientKey, testCerts.ClientCert)
 		otherToken, _ := admin.Generate(context.Background(), testCerts.ClientCert, assertion2)

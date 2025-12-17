@@ -25,8 +25,7 @@ var (
 // Tokens can only be created by the ContextService and must be verified before use.
 type SignedToken string
 
-// CertificateInfo contains extracted certificate information
-// This replaces storing the full x509.Certificate for better serialization
+// This replaces storing the full x509.Certificate for better serialization.
 type CertificateInfo struct {
 	// Subject fields
 	CommonName         string   `json:"cn,omitempty"`
@@ -55,7 +54,7 @@ type CertificateInfo struct {
 	IPAddresses    []string `json:"ips,omitempty"`
 }
 
-// Context contains the security context information
+// Context contains the security context information.
 type Context[M any] struct {
 	IssuedAt               time.Time
 	ExpiresAt              time.Time
@@ -65,17 +64,17 @@ type Context[M any] struct {
 	Permissions            []string
 }
 
-// HasPermission checks if the context data includes a specific permission scope
+// HasPermission checks if the context data includes a specific permission scope.
 func (c *Context[M]) HasPermission(scope string) bool {
 	return slices.Contains(c.Permissions, scope)
 }
 
-// IsExpired checks if the context data has expired
+// IsExpired checks if the context data has expired.
 func (c *Context[M]) IsExpired() bool {
 	return time.Now().After(c.ExpiresAt)
 }
 
-// Clone creates a deep copy of the context for parallel processing
+// Clone creates a deep copy of the context for parallel processing.
 func (c *Context[M]) Clone() *Context[M] {
 	if c == nil {
 		return nil
@@ -151,7 +150,7 @@ func (c *Context[M]) Clone() *Context[M] {
 	return clone
 }
 
-// tokenPayload represents the wire format of a session token
+// tokenPayload represents the wire format of a session token.
 type tokenPayload struct {
 	Fingerprint string    `json:"f"`           // Certificate fingerprint
 	IssuedAt    time.Time `json:"i,omitempty"` // When token was issued (omitempty for backward compat)
@@ -159,7 +158,7 @@ type tokenPayload struct {
 	Nonce       string    `json:"n"`           // Random nonce for uniqueness
 }
 
-// encodeAndSign creates a signed session token from a payload
+// encodeAndSign creates a signed session token from a payload.
 func encodeAndSign(payload *tokenPayload, signer CryptoSigner) (SignedToken, error) {
 	// Serialize the payload
 	payloadBytes, err := json.Marshal(payload)
@@ -183,7 +182,7 @@ func encodeAndSign(payload *tokenPayload, signer CryptoSigner) (SignedToken, err
 	return SignedToken(token), nil
 }
 
-// verifyTokenPayload verifies a token and returns the payload
+// verifyTokenPayload verifies a token and returns the payload.
 func verifyTokenPayload(token SignedToken, publicKey crypto.PublicKey) (*tokenPayload, error) {
 	// Split token into payload and signature
 	parts := strings.Split(string(token), ":")
@@ -243,8 +242,8 @@ func verifyTokenPayload(token SignedToken, publicKey crypto.PublicKey) (*tokenPa
 	return &payload, nil
 }
 
-// getFingerprint calculates the SHA256 fingerprint of a certificate
-func getFingerprint(cert *x509.Certificate) string {
+// GetFingerprint calculates the SHA256 fingerprint of a certificate.
+func GetFingerprint(cert *x509.Certificate) string {
 	if cert == nil {
 		return ""
 	}
@@ -252,8 +251,12 @@ func getFingerprint(cert *x509.Certificate) string {
 	return base64.StdEncoding.EncodeToString(hash[:])
 }
 
-// extractCertificateInfo extracts relevant information from an x509.Certificate
-// This allows us to avoid storing the full certificate while retaining necessary data
+// getFingerprint is an alias for internal usage.
+func getFingerprint(cert *x509.Certificate) string {
+	return GetFingerprint(cert)
+}
+
+// This allows us to avoid storing the full certificate while retaining necessary data.
 func extractCertificateInfo(cert *x509.Certificate) CertificateInfo {
 	if cert == nil {
 		return CertificateInfo{}
@@ -307,13 +310,13 @@ func extractCertificateInfo(cert *x509.Certificate) CertificateInfo {
 	}
 
 	// Convert IP addresses to strings
-	var ipAddresses []string
+	ipAddresses := make([]string, 0, len(cert.IPAddresses))
 	for _, ip := range cert.IPAddresses {
 		ipAddresses = append(ipAddresses, ip.String())
 	}
 
 	// Convert URIs to strings
-	var uris []string
+	uris := make([]string, 0, len(cert.URIs))
 	for _, uri := range cert.URIs {
 		uris = append(uris, uri.String())
 	}
@@ -347,7 +350,7 @@ func extractCertificateInfo(cert *x509.Certificate) CertificateInfo {
 	}
 }
 
-// generateContextID creates a unique context identifier
+// generateContextID creates a unique context identifier.
 func generateContextID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -356,13 +359,13 @@ func generateContextID() string {
 	return base64.URLEncoding.EncodeToString(b)
 }
 
-// DefaultContextPolicy provides a simple default policy that sets basic permissions and expiry
+// DefaultContextPolicy provides a simple default policy that sets basic permissions and expiry.
 func DefaultContextPolicy[M any]() ContextPolicy[M] {
 	return func(cert *x509.Certificate) (*Context[M], error) {
 		if cert == nil {
 			return nil, errors.New("certificate is required")
 		}
-		
+
 		// Create context with 1 hour expiry by default
 		var metadata M // Zero value of M
 		ctx := &Context[M]{
@@ -373,7 +376,7 @@ func DefaultContextPolicy[M any]() ContextPolicy[M] {
 			Metadata:               metadata,
 			Permissions:            []string{}, // No permissions by default
 		}
-		
+
 		return ctx, nil
 	}
 }

@@ -1,17 +1,13 @@
 package sctx
 
 import (
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/base64"
-	"math/big"
+	"context"
 	"sync"
 	"testing"
 	"time"
 )
 
-// TestCacheCleanup tests the cache cleanup functionality
+// TestCacheCleanup tests the cache cleanup functionality.
 func TestCacheCleanup(t *testing.T) {
 	// Create cache with very short cleanup interval
 	cache := newMemoryContextCache[any](100 * time.Millisecond)
@@ -32,8 +28,8 @@ func TestCacheCleanup(t *testing.T) {
 	}
 
 	// Store contexts
-	cache.Store("expired", ctx1)
-	cache.Store("valid", ctx2)
+	cache.Store(context.Background(), "expired", ctx1)
+	cache.Store(context.Background(), "valid", ctx2)
 
 	// Verify both exist
 	memCache := cache.(*memoryContextCache[any])
@@ -50,12 +46,12 @@ func TestCacheCleanup(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Check that expired context was removed
-	if _, exists := cache.Get("expired"); exists {
+	if _, exists := cache.Get(context.Background(), "expired"); exists {
 		t.Error("Expired context should have been cleaned up")
 	}
 
 	// Check that valid context still exists
-	if _, exists := cache.Get("valid"); !exists {
+	if _, exists := cache.Get(context.Background(), "valid"); !exists {
 		t.Error("Valid context should still exist")
 	}
 
@@ -64,7 +60,7 @@ func TestCacheCleanup(t *testing.T) {
 	wg.Wait()
 }
 
-// TestNewMemoryContextCacheDefaultInterval tests default cleanup interval
+// TestNewMemoryContextCacheDefaultInterval tests default cleanup interval.
 func TestNewMemoryContextCacheDefaultInterval(t *testing.T) {
 	// Create cache with zero interval (should use default)
 	cache := newMemoryContextCache[any](0)
@@ -80,209 +76,141 @@ func TestNewMemoryContextCacheDefaultInterval(t *testing.T) {
 	}
 }
 
-// TestContextHasPermission tests the HasPermission method
-func TestContextHasPermission(t *testing.T) {
-	ctx := &Context[any]{
-		Permissions: []string{"read", "write", "admin"},
-	}
+// TestCacheGetAndStore tests basic cache operations.
+func TestCacheGetAndStore(t *testing.T) {
+	cache := newMemoryContextCache[any](5 * time.Minute)
+	ctx := context.Background()
 
-	tests := []struct {
-		name       string
-		permission string
-		expected   bool
-	}{
-		{"Has read", "read", true},
-		{"Has write", "write", true},
-		{"Has admin", "admin", true},
-		{"Doesn't have delete", "delete", false},
-		{"Empty permission", "", false},
-		{"Case sensitive", "READ", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ctx.HasPermission(tt.permission); got != tt.expected {
-				t.Errorf("HasPermission(%q) = %v, want %v", tt.permission, got, tt.expected)
-			}
-		})
-	}
-
-	// Test with nil permissions
-	emptyCtx := &Context[any]{}
-	if emptyCtx.HasPermission("read") {
-		t.Error("Context with nil permissions should not have any permission")
-	}
-}
-
-// TestContextCloneEdgeCases tests remaining edge cases in Clone
-func TestContextCloneEdgeCases(t *testing.T) {
-	// Test cloning nil context
-	var nilCtx *Context[any]
-	cloned := nilCtx.Clone()
-	if cloned != nil {
-		t.Error("Cloning nil context should return nil")
-	}
-}
-
-// TestEncodeAndSignEdgeCases tests edge cases in encodeAndSign
-func TestEncodeAndSignEdgeCases(t *testing.T) {
-	resetAdminForTesting()
-	// This function is internal but we can test it through the admin service
-	testCerts := GenerateTestCertificates(t)
-
-	// Test with ECDSA signer
-	_, ecdsaKey, _ := GenerateKeyPair(CryptoECDSAP256)
-	admin, _ := NewAdminService[any](ecdsaKey, testCerts.CertPool)
-	adminSvc := admin.(*adminService[any])
-
-	// Create a context
-	ctx := &Context[any]{
-		CertificateFingerprint: "test-fingerprint",
+	// Test store and get
+	sctxContext := &Context[any]{
+		Permissions:            []string{"read"},
 		ExpiresAt:              time.Now().Add(time.Hour),
+		CertificateFingerprint: "test-fingerprint",
 	}
 
-	// Test token creation
-	token, err := adminSvc.createToken(ctx)
+	cache.Store(ctx, "test-fingerprint", sctxContext)
+
+	retrieved, exists := cache.Get(ctx, "test-fingerprint")
+	if !exists {
+		t.Error("Context should exist after store")
+	}
+	if retrieved.CertificateFingerprint != "test-fingerprint" {
+		t.Error("Retrieved context fingerprint mismatch")
+	}
+
+	// Test get non-existent
+	_, exists = cache.Get(ctx, "non-existent")
+	if exists {
+		t.Error("Non-existent context should not exist")
+	}
+}
+
+// TestCacheDelete tests cache deletion.
+func TestCacheDelete(t *testing.T) {
+	cache := newMemoryContextCache[any](5 * time.Minute)
+	ctx := context.Background()
+
+	// Store a context
+	sctxContext := &Context[any]{
+		Permissions: []string{"read"},
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}
+	cache.Store(ctx, "to-delete", sctxContext)
+
+	// Verify it exists
+	if _, exists := cache.Get(ctx, "to-delete"); !exists {
+		t.Error("Context should exist before delete")
+	}
+
+	// Delete it
+	err := cache.Delete(ctx, "to-delete")
 	if err != nil {
-		t.Errorf("Failed to create token: %v", err)
-	}
-	if token == "" {
-		t.Error("Token should not be empty")
-	}
-}
-
-// TestVerifyTokenPayloadEdgeCases tests edge cases in verifyTokenPayload
-func TestVerifyTokenPayloadEdgeCases(t *testing.T) {
-	// Test with malformed tokens
-	tests := []struct {
-		name  string
-		token SignedToken
-	}{
-		{"Empty token", ""},
-		{"No colon", "noColon"},
-		{"Multiple colons", "part1:part2:part3"},
-		{"Invalid base64 payload", "!invalid!:signature"},
-		{"Invalid base64 signature", "payload:!invalid!"},
-		{"Valid base64 but invalid JSON", "aW52YWxpZA==:signature"},
+		t.Errorf("Delete failed: %v", err)
 	}
 
-	// Generate a key for testing
-	_, pubKey, _ := GenerateKeyPair(CryptoEd25519)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := verifyTokenPayload(tt.token, pubKey)
-			if err == nil {
-				t.Error("Should fail with malformed token")
-			}
-		})
+	// Verify it's gone
+	if _, exists := cache.Get(ctx, "to-delete"); exists {
+		t.Error("Context should not exist after delete")
 	}
 
-	// Test with unsupported public key type
-	type unsupportedKey struct{}
-	_, err := verifyTokenPayload("payload:signature", unsupportedKey{})
-	if err == nil {
-		t.Error("Should fail with unsupported key type")
-	}
-}
-
-// TestGetFingerprintEdgeCases tests edge cases
-func TestGetFingerprintEdgeCases(t *testing.T) {
-	// Test with nil certificate
-	fingerprint := getFingerprint(nil)
-	if fingerprint != "" {
-		t.Error("Fingerprint of nil certificate should be empty")
-	}
-}
-
-// TestExtractCertificateInfoEdgeCases tests edge cases
-func TestExtractCertificateInfoEdgeCases(t *testing.T) {
-	// Test with nil certificate
-	info := extractCertificateInfo(nil)
-	if info.CommonName != "" {
-		t.Error("Info from nil certificate should be empty")
-	}
-
-	// Test with certificate having various key usages
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: "Test Cert",
-		},
-		Issuer: pkix.Name{
-			CommonName: "Test Issuer",
-		},
-		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature |
-			x509.KeyUsageKeyEncipherment |
-			x509.KeyUsageDataEncipherment |
-			x509.KeyUsageCertSign,
-		ExtKeyUsage: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageClientAuth,
-			x509.ExtKeyUsageServerAuth,
-			x509.ExtKeyUsageCodeSigning,
-			x509.ExtKeyUsageEmailProtection,
-		},
-	}
-
-	// Self-sign the certificate
-	certDER, _ := x509.CreateCertificate(rand.Reader, template, template, testPublicKey, testPrivateKey)
-	cert, _ := x509.ParseCertificate(certDER)
-
-	info = extractCertificateInfo(cert)
-
-	// Check all key usages were extracted
-	expectedUsages := []string{
-		"digital_signature",
-		"key_encipherment",
-		"data_encipherment",
-		"cert_sign",
-		"client_auth",
-		"server_auth",
-		"code_signing",
-		"email_protection",
-	}
-
-	for _, usage := range expectedUsages {
-		found := false
-		for _, ku := range info.KeyUsage {
-			if ku == usage {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("Expected key usage %s not found", usage)
-		}
-	}
-}
-
-// TestGenerateContextID tests context ID generation
-func TestGenerateContextID(t *testing.T) {
-	// Test normal operation
-	id1 := generateContextID()
-	if id1 == "" {
-		t.Error("Generated ID should not be empty")
-	}
-
-	// Generate another ID and ensure they're different
-	id2 := generateContextID()
-	if id1 == id2 {
-		t.Error("Generated IDs should be unique")
-	}
-
-	// Test that IDs are valid base64
-	decoded, err := base64.URLEncoding.DecodeString(id1)
+	// Delete non-existent (should not error)
+	err = cache.Delete(ctx, "non-existent")
 	if err != nil {
-		t.Errorf("Generated ID should be valid base64: %v", err)
-	}
-	if len(decoded) != 16 {
-		t.Errorf("Decoded ID should be 16 bytes, got %d", len(decoded))
+		t.Errorf("Deleting non-existent should not error: %v", err)
 	}
 }
 
-// Test helper keys
-var (
-	testPublicKey, testPrivateKey, _ = GenerateKeyPair(CryptoEd25519)
-)
+// TestCacheCount tests the count functionality.
+func TestCacheCount(t *testing.T) {
+	cache := newMemoryContextCache[any](5 * time.Minute)
+	ctx := context.Background()
+	memCache := cache.(*memoryContextCache[any])
+
+	if memCache.Count() != 0 {
+		t.Error("Empty cache should have count 0")
+	}
+
+	// Add some contexts
+	for i := 0; i < 5; i++ {
+		sctxContext := &Context[any]{
+			ExpiresAt: time.Now().Add(time.Hour),
+		}
+		cache.Store(ctx, string(rune('a'+i)), sctxContext)
+	}
+
+	if memCache.Count() != 5 {
+		t.Errorf("Expected count 5, got %d", memCache.Count())
+	}
+}
+
+// TestCacheClear tests the clear functionality.
+func TestCacheClear(t *testing.T) {
+	cache := newMemoryContextCache[any](5 * time.Minute)
+	ctx := context.Background()
+	memCache := cache.(*memoryContextCache[any])
+
+	// Add some contexts
+	for i := 0; i < 3; i++ {
+		sctxContext := &Context[any]{
+			ExpiresAt: time.Now().Add(time.Hour),
+		}
+		cache.Store(ctx, string(rune('a'+i)), sctxContext)
+	}
+
+	if memCache.Count() != 3 {
+		t.Errorf("Expected count 3, got %d", memCache.Count())
+	}
+
+	// Clear the cache
+	memCache.Clear()
+
+	if memCache.Count() != 0 {
+		t.Errorf("Expected count 0 after clear, got %d", memCache.Count())
+	}
+}
+
+// TestCacheConcurrentAccess tests thread safety.
+func TestCacheConcurrentAccess(t *testing.T) {
+	t.Parallel()
+	cache := newMemoryContextCache[any](5 * time.Minute)
+	ctx := context.Background()
+
+	// Run concurrent operations
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			fingerprint := string(rune('a' + (id % 26)))
+			sctxContext := &Context[any]{
+				ExpiresAt:              time.Now().Add(time.Hour),
+				CertificateFingerprint: fingerprint,
+			}
+			cache.Store(ctx, fingerprint, sctxContext)
+			cache.Get(ctx, fingerprint)
+		}(i)
+	}
+
+	wg.Wait()
+	// If we got here without panic, the test passed
+}

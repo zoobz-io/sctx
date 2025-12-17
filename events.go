@@ -1,95 +1,102 @@
 package sctx
 
-// ContextEvent represents token/context lifecycle events
-type ContextEvent[M any] struct {
-	Context   *Context[M]
-	Token     string
-	Operation string // "generated", "verified", "revoked", "expired"
-}
+import "github.com/zoobzio/capitan"
 
-// CertificateEvent represents certificate validation events
-type CertificateEvent struct {
-	CertificateInfo CertificateInfo
-	Reason          string
-	Error           error
-}
+// Token lifecycle signals.
+var (
+	// TokenGenerated is emitted when a token is created from a certificate.
+	// Fields: FingerprintKey, CommonNameKey, PermissionsKey.
+	TokenGenerated = capitan.NewSignal("sctx.token.generated", "Security token created from certificate")
 
-// Clone creates a deep copy of ContextEvent for pipz.Cloner interface
-func (e ContextEvent[M]) Clone() ContextEvent[M] {
-	return ContextEvent[M]{
-		Context:   e.Context.Clone(),
-		Token:     e.Token,
-		Operation: e.Operation,
-	}
-}
+	// TokenVerified is emitted when a token is successfully verified.
+	// Fields: FingerprintKey.
+	TokenVerified = capitan.NewSignal("sctx.token.verified", "Security token successfully verified")
 
-// Clone creates a deep copy of CertificateEvent for pipz.Cloner interface
-func (e CertificateEvent) Clone() CertificateEvent {
-	cloned := CertificateEvent{
-		Reason: e.Reason,
-		Error:  e.Error,
-	}
-
-	// Deep copy CertificateInfo
-	cloned.CertificateInfo = CertificateInfo{
-		CommonName:   e.CertificateInfo.CommonName,
-		SerialNumber: e.CertificateInfo.SerialNumber,
-		NotBefore:    e.CertificateInfo.NotBefore,
-		NotAfter:     e.CertificateInfo.NotAfter,
-		Issuer:       e.CertificateInfo.Issuer,
-	}
-
-	// Deep copy KeyUsage slice
-	if e.CertificateInfo.KeyUsage != nil {
-		cloned.CertificateInfo.KeyUsage = make([]string, len(e.CertificateInfo.KeyUsage))
-		copy(cloned.CertificateInfo.KeyUsage, e.CertificateInfo.KeyUsage)
-	}
-
-	return cloned
-}
-
-// Security audit signals for sctx events.
-// These signals can be routed to audit logs, SIEM systems, or monitoring tools.
-//
-//nolint:revive // Signal constants follow convention of ALL_CAPS
-const (
-	// TOKEN_GENERATED indicates a new token was created from a certificate
-	TOKEN_GENERATED = "TOKEN_GENERATED"
-
-	// TOKEN_VERIFIED indicates successful token verification
-	TOKEN_VERIFIED = "TOKEN_VERIFIED"
-
-	// TOKEN_REJECTED indicates failed token verification
-	TOKEN_REJECTED = "TOKEN_REJECTED"
-
-	// GUARD_CREATED indicates a new guard was created
-	GUARD_CREATED = "GUARD_CREATED"
-
-	// GUARD_VALIDATED indicates successful guard validation
-	GUARD_VALIDATED = "GUARD_VALIDATED"
-
-	// GUARD_REJECTED indicates failed guard validation
-	GUARD_REJECTED = "GUARD_REJECTED"
-
-	// CONTEXT_REVOKED indicates a context was manually revoked
-	CONTEXT_REVOKED = "CONTEXT_REVOKED"
-
-	// CONTEXT_EXPIRED indicates a context expired naturally
-	CONTEXT_EXPIRED = "CONTEXT_EXPIRED"
-
-	// CERTIFICATE_REJECTED indicates certificate validation failure
-	CERTIFICATE_REJECTED = "CERTIFICATE_REJECTED"
-
-	// ADMIN_CHANGED indicates the admin service was changed
-	ADMIN_CHANGED = "ADMIN_CHANGED"
-
-	// PIPELINE_UPDATED indicates the context pipeline was updated
-	PIPELINE_UPDATED = "PIPELINE_UPDATED"
+	// TokenRejected is emitted when token verification fails.
+	// Fields: FingerprintKey, ErrorKey.
+	TokenRejected = capitan.NewSignal("sctx.token.rejected", "Security token verification failed")
 )
 
-// Processor names as constants
-const (
-	ProcessorSanitizeContext     = "sanitize-context"
-	ProcessorSanitizeCertificate = "sanitize-certificate"
+// Guard lifecycle signals.
+var (
+	// GuardCreated is emitted when a guard is created.
+	// Fields: GuardIDKey, FingerprintKey, RequiredPermsKey.
+	GuardCreated = capitan.NewSignal("sctx.guard.created", "Permission guard created by token holder")
+
+	// GuardValidated is emitted when guard validation succeeds.
+	// Fields: GuardIDKey, FingerprintKey.
+	GuardValidated = capitan.NewSignal("sctx.guard.validated", "Guard validation succeeded for token")
+
+	// GuardRejected is emitted when guard validation fails.
+	// Fields: GuardIDKey, FingerprintKey, ErrorKey.
+	GuardRejected = capitan.NewSignal("sctx.guard.rejected", "Guard validation failed for token")
 )
 
+// Context lifecycle signals.
+var (
+	// ContextRevoked is emitted when a context is manually revoked.
+	// Fields: FingerprintKey.
+	ContextRevoked = capitan.NewSignal("sctx.context.revoked", "Security context manually revoked")
+)
+
+// Assertion signals.
+var (
+	// AssertionValidated is emitted when an assertion passes validation.
+	// Fields: FingerprintKey.
+	AssertionValidated = capitan.NewSignal("sctx.assertion.validated", "Assertion validation succeeded")
+
+	// AssertionRejected is emitted when assertion validation fails.
+	// Fields: FingerprintKey, ErrorKey.
+	AssertionRejected = capitan.NewSignal("sctx.assertion.rejected", "Assertion validation failed")
+)
+
+// Certificate signals.
+var (
+	// CertificateRejected is emitted when certificate verification fails.
+	// Fields: CommonNameKey, ErrorKey.
+	CertificateRejected = capitan.NewSignal("sctx.certificate.rejected", "Certificate verification failed")
+)
+
+// Cache operation signals.
+var (
+	// CacheStored is emitted when a context is stored in cache.
+	// Fields: FingerprintKey.
+	CacheStored = capitan.NewSignal("sctx.cache.stored", "Security context stored in cache")
+
+	// CacheHit is emitted when a cache lookup succeeds.
+	// Fields: FingerprintKey.
+	CacheHit = capitan.NewSignal("sctx.cache.hit", "Cache lookup found existing context")
+
+	// CacheMiss is emitted when a cache lookup fails.
+	// Fields: FingerprintKey.
+	CacheMiss = capitan.NewSignal("sctx.cache.miss", "Cache lookup did not find context")
+
+	// CacheDeleted is emitted when a context is deleted from cache.
+	// Fields: FingerprintKey.
+	CacheDeleted = capitan.NewSignal("sctx.cache.deleted", "Security context deleted from cache")
+
+	// CacheExpired is emitted when a context expires during cleanup.
+	// Fields: FingerprintKey.
+	CacheExpired = capitan.NewSignal("sctx.cache.expired", "Security context expired during cache cleanup")
+)
+
+// Event field keys.
+var (
+	// Identity fields.
+	FingerprintKey = capitan.NewStringKey("fingerprint")
+	CommonNameKey  = capitan.NewStringKey("common_name")
+
+	// Permission fields.
+	PermissionsKey   = capitan.NewStringKey("permissions")
+	RequiredPermsKey = capitan.NewStringKey("required_permissions")
+
+	// Guard fields.
+	GuardIDKey = capitan.NewStringKey("guard_id")
+
+	// Error field.
+	ErrorKey = capitan.NewStringKey("error")
+
+	// Time fields.
+	ExpiresAtKey  = capitan.NewTimeKey("expires_at")
+	DurationMsKey = capitan.NewInt64Key("duration_ms")
+)

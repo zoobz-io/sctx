@@ -10,12 +10,12 @@ import (
 	"time"
 )
 
-// ContextGuard is a function that enriches a context in the pipeline
+// ContextGuard is a function that enriches a context in the pipeline.
 type ContextGuard[M any] func(context.Context, *Context[M]) (*Context[M], error)
 
 // Context Enrichment Guards - for building security context from certificates
 
-// RequireCertField ensures a certificate field matches an expected value
+// RequireCertField ensures a certificate field matches an expected value.
 func RequireCertField[M any](field, expected string) ContextGuard[M] {
 	return func(_ context.Context, ctx *Context[M]) (*Context[M], error) {
 		actual := extractCertInfoField(ctx.CertificateInfo, field)
@@ -26,7 +26,7 @@ func RequireCertField[M any](field, expected string) ContextGuard[M] {
 	}
 }
 
-// RequireCertPattern ensures a certificate field matches a regex pattern
+// RequireCertPattern ensures a certificate field matches a regex pattern.
 func RequireCertPattern[M any](field, pattern string) ContextGuard[M] {
 	return func(_ context.Context, ctx *Context[M]) (*Context[M], error) {
 		// Compile regex pattern
@@ -43,7 +43,7 @@ func RequireCertPattern[M any](field, pattern string) ContextGuard[M] {
 	}
 }
 
-// GrantPermissions adds permissions to the context
+// GrantPermissions adds permissions to the context.
 func GrantPermissions[M any](permissions ...string) ContextGuard[M] {
 	return func(_ context.Context, ctx *Context[M]) (*Context[M], error) {
 		ctx.Permissions = append(ctx.Permissions, permissions...)
@@ -51,13 +51,13 @@ func GrantPermissions[M any](permissions ...string) ContextGuard[M] {
 	}
 }
 
-// ContextOptions contains optional fields to set on a context
+// ContextOptions contains optional fields to set on a context.
 type ContextOptions struct {
 	Expiry      *time.Duration
 	Permissions []string
 }
 
-// SetContext sets multiple context fields at once for efficiency
+// SetContext sets multiple context fields at once for efficiency.
 func SetContext[M any](opts ContextOptions) ContextGuard[M] {
 	return func(_ context.Context, ctx *Context[M]) (*Context[M], error) {
 		if opts.Expiry != nil {
@@ -71,7 +71,7 @@ func SetContext[M any](opts ContextOptions) ContextGuard[M] {
 	}
 }
 
-// Helper function to extract certificate info fields
+// Helper function to extract certificate info fields.
 func extractCertInfoField(certInfo CertificateInfo, field string) string {
 	switch strings.ToUpper(field) {
 	case "CN", "COMMONNAME":
@@ -115,25 +115,25 @@ func extractCertInfoField(certInfo CertificateInfo, field string) string {
 	}
 }
 
-// guardImpl implements the Guard interface
+// guardImpl implements the Guard interface.
 type guardImpl struct {
 	id                  string
-	creatorFingerprint  string   // Certificate fingerprint of the guard creator
+	creatorFingerprint  string // Certificate fingerprint of the guard creator
 	requiredPermissions []string
 	validate            func(context.Context, ...SignedToken) error
 }
 
-// ID returns the unique identifier for this guard
+// ID returns the unique identifier for this guard.
 func (g *guardImpl) ID() string {
 	return g.id
 }
 
-// Validate checks if the token has the required permissions
+// Validate checks if the token has the required permissions.
 func (g *guardImpl) Validate(ctx context.Context, tokens ...SignedToken) error {
 	return g.validate(ctx, tokens...)
 }
 
-// Permissions returns the list of permissions this guard checks
+// Permissions returns the list of permissions this guard checks.
 func (g *guardImpl) Permissions() []string {
 	// Return a copy to prevent modification
 	perms := make([]string, len(g.requiredPermissions))
@@ -141,7 +141,7 @@ func (g *guardImpl) Permissions() []string {
 	return perms
 }
 
-// generateGuardID creates a unique identifier for a guard
+// generateGuardID creates a unique identifier for a guard.
 func generateGuardID() string {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
@@ -150,7 +150,7 @@ func generateGuardID() string {
 	return hex.EncodeToString(bytes)
 }
 
-// hasPermission checks if a permission exists in the list
+// hasPermission checks if a permission exists in the list.
 func hasPermission(permissions []string, permission string) bool {
 	for _, p := range permissions {
 		if p == permission {

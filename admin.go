@@ -6,8 +6,11 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/zoobzio/capitan"
 )
 
 var (
@@ -18,14 +21,7 @@ var (
 	adminCreated           bool
 )
 
-// resetAdminForTesting resets the admin singleton state for testing purposes
-// This function should only be used in tests
-func resetAdminForTesting() {
-	adminOnce = sync.Once{}
-	adminCreated = false
-}
-
-// adminService is the security authority that creates and validates tokens
+// adminService is the security authority that creates and validates tokens.
 type adminService[M any] struct {
 	privateKey crypto.PrivateKey
 	publicKey  crypto.PublicKey
@@ -34,9 +30,9 @@ type adminService[M any] struct {
 	signer     CryptoSigner
 
 	// Policy function for transforming certificates into contexts
-	policy     ContextPolicy[M]
-	policyMu   sync.RWMutex
-	
+	policy   ContextPolicy[M]
+	policyMu sync.RWMutex
+
 	// Assertion validation using direct function calls (no pipz dependency)
 
 	// Guard configuration
@@ -45,10 +41,9 @@ type adminService[M any] struct {
 	// Nonce tracking for replay protection
 	nonceMu    sync.RWMutex
 	nonceCache map[string]time.Time
-
 }
 
-// createAdminService is the internal implementation of admin service creation
+// createAdminService is the internal implementation of admin service creation.
 func createAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin[M], error) {
 	if privateKey == nil {
 		return nil, ErrInvalidKey
@@ -73,12 +68,12 @@ func createAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.Ce
 	cache := newMemoryContextCache[M](5 * time.Minute)
 
 	result := &adminService[M]{
-		privateKey:        privateKey,
-		publicKey:         signer.PublicKey(),
-		certPool:          trustedCAs,
-		cache:             cache,
-		signer:            signer,
-		nonceCache:        make(map[string]time.Time),
+		privateKey: privateKey,
+		publicKey:  signer.PublicKey(),
+		certPool:   trustedCAs,
+		cache:      cache,
+		signer:     signer,
+		nonceCache: make(map[string]time.Time),
 	}
 
 	// Assertion validation now uses direct function calls - no pipeline setup needed
@@ -94,8 +89,7 @@ func createAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.Ce
 	return result, nil
 }
 
-
-// NewAdminService creates a new admin service instance - only one admin allowed per application instance
+// NewAdminService creates a new admin service instance - only one admin allowed per application instance.
 func NewAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertPool) (Admin[M], error) {
 	if adminCreated {
 		return nil, ErrAdminAlreadyCreated
@@ -112,17 +106,17 @@ func NewAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.CertP
 	return admin, err
 }
 
-// PublicKey returns the public key for token verification
+// PublicKey returns the public key for token verification.
 func (a *adminService[M]) PublicKey() crypto.PublicKey {
 	return a.publicKey
 }
 
-// Algorithm returns the crypto algorithm in use
+// Algorithm returns the crypto algorithm in use.
 func (a *adminService[M]) Algorithm() CryptoAlgorithm {
 	return a.signer.Algorithm()
 }
 
-// cleanExpiredNonces removes expired nonces from the cache
+// cleanExpiredNonces removes expired nonces from the cache.
 func (a *adminService[M]) cleanExpiredNonces() {
 	now := time.Now()
 	for nonce, expiry := range a.nonceCache {
@@ -134,23 +128,26 @@ func (a *adminService[M]) cleanExpiredNonces() {
 
 // Cache operations for admin control
 
-// RevokeByFingerprint removes a context from the cache
-func (a *adminService[M]) RevokeByFingerprint(fingerprint string) error {
+// RevokeByFingerprint removes a context from the cache.
+func (a *adminService[M]) RevokeByFingerprint(ctx context.Context, fingerprint string) error {
 	// Clean expired nonces during this write operation
 	a.nonceMu.Lock()
 	a.cleanExpiredNonces()
 	a.nonceMu.Unlock()
 
-	// Context will be revoked
-	return a.cache.Delete(fingerprint)
+	err := a.cache.Delete(ctx, fingerprint)
+	if err == nil {
+		capitan.Info(ctx, ContextRevoked, FingerprintKey.Field(fingerprint))
+	}
+	return err
 }
 
-// GetContext retrieves a context by fingerprint
-func (a *adminService[M]) GetContext(fingerprint string) (*Context[M], bool) {
-	return a.cache.Get(fingerprint)
+// GetContext retrieves a context by fingerprint.
+func (a *adminService[M]) GetContext(ctx context.Context, fingerprint string) (*Context[M], bool) {
+	return a.cache.Get(ctx, fingerprint)
 }
 
-// ActiveCount returns the number of active contexts
+// ActiveCount returns the number of active contexts.
 func (a *adminService[M]) ActiveCount() int {
 	if counter, ok := a.cache.(interface{ Count() int }); ok {
 		return counter.Count()
@@ -158,21 +155,20 @@ func (a *adminService[M]) ActiveCount() int {
 	return -1 // Unknown
 }
 
-// SetPolicy sets the context policy function
+// SetPolicy sets the context policy function.
 func (a *adminService[M]) SetPolicy(policy ContextPolicy[M]) error {
 	a.policyMu.Lock()
 	defer a.policyMu.Unlock()
-	
+
 	if policy == nil {
 		return errors.New("policy cannot be nil")
 	}
-	
+
 	a.policy = policy
 	return nil
 }
 
-// SetCache replaces the context cache implementation
-// This allows users to bring their own cache (Redis, Hazelcast, etc)
+// This allows users to bring their own cache (Redis, Hazelcast, etc).
 func (a *adminService[M]) SetCache(cache ContextCache[M]) error {
 	if cache == nil {
 		return errors.New("cache cannot be nil")
@@ -181,8 +177,7 @@ func (a *adminService[M]) SetCache(cache ContextCache[M]) error {
 	return nil
 }
 
-
-// Generate creates a token for the given certificate and assertion
+// Generate creates a token for the given certificate and assertion.
 func (a *adminService[M]) Generate(ctx context.Context, cert *x509.Certificate, assertion SignedAssertion) (SignedToken, error) {
 	if cert == nil {
 		return "", errors.New("certificate is required")
@@ -201,13 +196,17 @@ func (a *adminService[M]) Generate(ctx context.Context, cert *x509.Certificate, 
 		CurrentTime:   time.Now(),
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}
-	if _, err := cert.Verify(opts); err != nil {
-		return "", fmt.Errorf("certificate verification failed: %w", err)
+	if _, verifyErr := cert.Verify(opts); verifyErr != nil {
+		capitan.Warn(ctx, CertificateRejected,
+			CommonNameKey.Field(cert.Subject.CommonName),
+			ErrorKey.Field(verifyErr.Error()),
+		)
+		return "", fmt.Errorf("certificate verification failed: %w", verifyErr)
 	}
 
 	// Check if already cached
 	fingerprint := getFingerprint(cert)
-	if cached, exists := a.cache.Get(fingerprint); exists {
+	if cached, exists := a.cache.Get(ctx, fingerprint); exists {
 		return a.createToken(cached)
 	}
 
@@ -215,16 +214,16 @@ func (a *adminService[M]) Generate(ctx context.Context, cert *x509.Certificate, 
 	a.policyMu.RLock()
 	policy := a.policy
 	a.policyMu.RUnlock()
-	
+
 	if policy == nil {
 		return "", ErrNoPolicy
 	}
-	
+
 	secCtx, err := policy(cert)
 	if err != nil {
 		return "", fmt.Errorf("policy failed: %w", err)
 	}
-	
+
 	// Set certificate info and fingerprint (in case policy didn't)
 	if secCtx.CertificateInfo.CommonName == "" {
 		secCtx.CertificateInfo = extractCertificateInfo(cert)
@@ -237,26 +236,29 @@ func (a *adminService[M]) Generate(ctx context.Context, cert *x509.Certificate, 
 	}
 
 	// Cache and return token
-	a.cache.Store(fingerprint, secCtx)
+	a.cache.Store(ctx, fingerprint, secCtx)
 	token, err := a.createToken(secCtx)
 	if err != nil {
 		return "", err
 	}
 
-	// Token has been generated
+	capitan.Info(ctx, TokenGenerated,
+		FingerprintKey.Field(fingerprint),
+		CommonNameKey.Field(cert.Subject.CommonName),
+		PermissionsKey.Field(strings.Join(secCtx.Permissions, ",")),
+	)
 
 	return token, nil
 }
 
-
-// createToken creates a signed token from a context
+// createToken creates a signed token from a context.
 func (a *adminService[M]) createToken(ctx *Context[M]) (SignedToken, error) {
 	// Token expiry should not exceed certificate expiry
 	tokenExpiry := ctx.ExpiresAt
 	if ctx.CertificateInfo.NotAfter.Before(tokenExpiry) {
 		tokenExpiry = ctx.CertificateInfo.NotAfter
 	}
-	
+
 	payload := &tokenPayload{
 		Fingerprint: ctx.CertificateFingerprint,
 		IssuedAt:    time.Now(),
@@ -267,21 +269,27 @@ func (a *adminService[M]) createToken(ctx *Context[M]) (SignedToken, error) {
 	return encodeAndSign(payload, a.signer)
 }
 
-// decryptToken decrypts a token and returns the fingerprint
-func (a *adminService[M]) decryptToken(token SignedToken) (string, error) {
+// decryptToken decrypts a token and returns the fingerprint.
+func (a *adminService[M]) decryptToken(ctx context.Context, token SignedToken) (string, error) {
 	payload, err := verifyTokenPayload(token, a.publicKey)
 	if err != nil {
+		capitan.Warn(ctx, TokenRejected,
+			ErrorKey.Field(err.Error()),
+		)
 		return "", err
 	}
+	capitan.Debug(ctx, TokenVerified,
+		FingerprintKey.Field(payload.Fingerprint),
+	)
 	return payload.Fingerprint, nil
 }
 
-// SetGuardCreationPermissions configures which permissions are required to create guards
+// SetGuardCreationPermissions configures which permissions are required to create guards.
 func (a *adminService[M]) SetGuardCreationPermissions(perms []string) {
 	a.guardCreationPermissions = perms
 }
 
-// CreateGuard creates a new guard that validates tokens for specific permissions
+// CreateGuard creates a new guard that validates tokens for specific permissions.
 func (a *adminService[M]) CreateGuard(ctx context.Context, token SignedToken, requiredPerms ...string) (Guard, error) {
 	// Clean expired nonces during this write operation
 	a.nonceMu.Lock()
@@ -289,17 +297,25 @@ func (a *adminService[M]) CreateGuard(ctx context.Context, token SignedToken, re
 	a.nonceMu.Unlock()
 
 	// 1. Validate token and get context
-	fingerprint, err := a.decryptToken(token)
+	fingerprint, err := a.decryptToken(ctx, token)
 	if err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
 
-	secCtx, exists := a.cache.Get(fingerprint)
+	secCtx, exists := a.cache.Get(ctx, fingerprint)
 	if !exists {
+		capitan.Warn(ctx, GuardRejected,
+			FingerprintKey.Field(fingerprint),
+			ErrorKey.Field("context not found"),
+		)
 		return nil, errors.New("context not found")
 	}
 
 	if secCtx.IsExpired() {
+		capitan.Warn(ctx, GuardRejected,
+			FingerprintKey.Field(fingerprint),
+			ErrorKey.Field("token expired"),
+		)
 		return nil, errors.New("token expired")
 	}
 
@@ -307,7 +323,12 @@ func (a *adminService[M]) CreateGuard(ctx context.Context, token SignedToken, re
 	if len(a.guardCreationPermissions) > 0 {
 		for _, perm := range a.guardCreationPermissions {
 			if !hasPermission(secCtx.Permissions, perm) {
-				return nil, fmt.Errorf("missing required permission to create guards: %s", perm)
+				err := fmt.Errorf("missing required permission to create guards: %s", perm)
+				capitan.Warn(ctx, GuardRejected,
+					FingerprintKey.Field(fingerprint),
+					ErrorKey.Field(err.Error()),
+				)
+				return nil, err
 			}
 		}
 	}
@@ -315,7 +336,12 @@ func (a *adminService[M]) CreateGuard(ctx context.Context, token SignedToken, re
 	// 3. Ensure guard can only check permissions the creator has
 	for _, perm := range requiredPerms {
 		if !hasPermission(secCtx.Permissions, perm) {
-			return nil, fmt.Errorf("cannot create guard for permission you don't have: %s", perm)
+			err := fmt.Errorf("cannot create guard for permission you don't have: %s", perm)
+			capitan.Warn(ctx, GuardRejected,
+				FingerprintKey.Field(fingerprint),
+				ErrorKey.Field(err.Error()),
+			)
+			return nil, err
 		}
 	}
 
@@ -329,32 +355,58 @@ func (a *adminService[M]) CreateGuard(ctx context.Context, token SignedToken, re
 		validate: func(ctx context.Context, tokens ...SignedToken) error {
 			// Require at least one token
 			if len(tokens) == 0 {
-				return errors.New("at least one token required")
+				err := errors.New("at least one token required")
+				capitan.Warn(ctx, GuardRejected,
+					GuardIDKey.Field(guardID),
+					ErrorKey.Field(err.Error()),
+				)
+				return err
 			}
 
 			// First token is the caller
 			callerToken := tokens[0]
-			
+
 			// Validate caller token
-			callerFp, err := a.decryptToken(callerToken)
+			callerFp, err := a.decryptToken(ctx, callerToken)
 			if err != nil {
+				capitan.Warn(ctx, GuardRejected,
+					GuardIDKey.Field(guardID),
+					ErrorKey.Field(err.Error()),
+				)
 				return fmt.Errorf("invalid caller token: %w", err)
 			}
 
 			// CRITICAL: Verify caller is the guard creator
 			if callerFp != creatorFingerprint {
-				return errors.New("guard can only be used by its creator")
+				err := errors.New("guard can only be used by its creator")
+				capitan.Warn(ctx, GuardRejected,
+					GuardIDKey.Field(guardID),
+					FingerprintKey.Field(callerFp),
+					ErrorKey.Field(err.Error()),
+				)
+				return err
 			}
 
-			callerCtx, exists := a.cache.Get(callerFp)
+			callerCtx, exists := a.cache.Get(ctx, callerFp)
 			if !exists {
-				return errors.New("caller context not found")
+				err := errors.New("caller context not found")
+				capitan.Warn(ctx, GuardRejected,
+					GuardIDKey.Field(guardID),
+					FingerprintKey.Field(callerFp),
+					ErrorKey.Field(err.Error()),
+				)
+				return err
 			}
 
 			if callerCtx.IsExpired() {
-				return errors.New("caller token expired")
+				err := errors.New("caller token expired")
+				capitan.Warn(ctx, GuardRejected,
+					GuardIDKey.Field(guardID),
+					FingerprintKey.Field(callerFp),
+					ErrorKey.Field(err.Error()),
+				)
+				return err
 			}
-
 
 			// Determine which tokens to validate for required permissions
 			var targetsToValidate []SignedToken
@@ -368,33 +420,63 @@ func (a *adminService[M]) CreateGuard(ctx context.Context, token SignedToken, re
 
 			// Validate each target token
 			for i, targetToken := range targetsToValidate {
-				fp, err := a.decryptToken(targetToken)
+				fp, err := a.decryptToken(ctx, targetToken)
 				if err != nil {
+					capitan.Warn(ctx, GuardRejected,
+						GuardIDKey.Field(guardID),
+						ErrorKey.Field(fmt.Sprintf("invalid token at position %d: %v", i+1, err)),
+					)
 					return fmt.Errorf("invalid token at position %d: %w", i+1, err)
 				}
 
-				ctx, exists := a.cache.Get(fp)
+				sctx, exists := a.cache.Get(ctx, fp)
 				if !exists {
-					return fmt.Errorf("context not found for token at position %d", i+1)
+					err := fmt.Errorf("context not found for token at position %d", i+1)
+					capitan.Warn(ctx, GuardRejected,
+						GuardIDKey.Field(guardID),
+						FingerprintKey.Field(fp),
+						ErrorKey.Field(err.Error()),
+					)
+					return err
 				}
 
-				if ctx.IsExpired() {
-					return fmt.Errorf("token at position %d expired", i+1)
+				if sctx.IsExpired() {
+					err := fmt.Errorf("token at position %d expired", i+1)
+					capitan.Warn(ctx, GuardRejected,
+						GuardIDKey.Field(guardID),
+						FingerprintKey.Field(fp),
+						ErrorKey.Field(err.Error()),
+					)
+					return err
 				}
 
 				// Check required permissions
 				for _, perm := range requiredPerms {
-					if !hasPermission(ctx.Permissions, perm) {
-						return fmt.Errorf("token at position %d missing permission: %s", i+1, perm)
+					if !hasPermission(sctx.Permissions, perm) {
+						err := fmt.Errorf("token at position %d missing permission: %s", i+1, perm)
+						capitan.Warn(ctx, GuardRejected,
+							GuardIDKey.Field(guardID),
+							FingerprintKey.Field(fp),
+							ErrorKey.Field(err.Error()),
+						)
+						return err
 					}
 				}
 			}
 
+			capitan.Debug(ctx, GuardValidated,
+				GuardIDKey.Field(guardID),
+				FingerprintKey.Field(callerFp),
+			)
 			return nil
 		},
 	}
 
-	// Guard has been created
+	capitan.Debug(ctx, GuardCreated,
+		GuardIDKey.Field(guardID),
+		FingerprintKey.Field(creatorFingerprint),
+		RequiredPermsKey.Field(strings.Join(requiredPerms, ",")),
+	)
 
 	return guard, nil
 }

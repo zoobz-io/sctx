@@ -12,21 +12,21 @@ import (
 	"math/big"
 )
 
-// CryptoAlgorithm represents the supported cryptographic algorithms
+// CryptoAlgorithm represents the supported cryptographic algorithms.
 type CryptoAlgorithm string
 
 const (
-	// CryptoEd25519 is the default high-performance algorithm (30% faster than ECDSA)
+	// CryptoEd25519 is the default high-performance algorithm (30% faster than ECDSA).
 	CryptoEd25519 CryptoAlgorithm = "ed25519"
 
-	// CryptoECDSAP256 is the FIPS 140-2 compliant algorithm for government/compliance requirements
+	// CryptoECDSAP256 is the FIPS 140-2 compliant algorithm for government/compliance requirements.
 	CryptoECDSAP256 CryptoAlgorithm = "ecdsa-p256"
 
-	// DefaultCryptoAlgorithm prioritizes performance - governments can opt into compliance
+	// DefaultCryptoAlgorithm prioritizes performance - governments can opt into compliance.
 	DefaultCryptoAlgorithm = CryptoEd25519
 )
 
-// CryptoSigner provides algorithm-agnostic cryptographic operations
+// CryptoSigner provides algorithm-agnostic cryptographic operations.
 type CryptoSigner interface {
 	// Sign signs the provided data
 	Sign(data []byte) ([]byte, error)
@@ -44,7 +44,7 @@ type CryptoSigner interface {
 	KeyType() string
 }
 
-// NewCryptoSigner creates a new crypto signer for the specified algorithm
+// NewCryptoSigner creates a new crypto signer for the specified algorithm.
 func NewCryptoSigner(algorithm CryptoAlgorithm, privateKey crypto.PrivateKey) (CryptoSigner, error) {
 	if privateKey == nil {
 		return nil, fmt.Errorf("private key is required")
@@ -76,7 +76,7 @@ func NewCryptoSigner(algorithm CryptoAlgorithm, privateKey crypto.PrivateKey) (C
 	}
 }
 
-// GenerateKeyPair generates a key pair for the specified algorithm
+// GenerateKeyPair generates a key pair for the specified algorithm.
 func GenerateKeyPair(algorithm CryptoAlgorithm) (crypto.PublicKey, crypto.PrivateKey, error) {
 	switch algorithm {
 	case CryptoEd25519:
@@ -95,7 +95,7 @@ func GenerateKeyPair(algorithm CryptoAlgorithm) (crypto.PublicKey, crypto.Privat
 	}
 }
 
-// ed25519Signer implements CryptoSigner for Ed25519
+// ed25519Signer implements CryptoSigner for Ed25519.
 type ed25519Signer struct {
 	privateKey ed25519.PrivateKey
 }
@@ -126,12 +126,12 @@ func (*ed25519Signer) KeyType() string {
 	return "Ed25519"
 }
 
-// ecdsaP256Signer implements CryptoSigner for ECDSA P-256
+// ecdsaP256Signer implements CryptoSigner for ECDSA P-256.
 type ecdsaP256Signer struct {
 	privateKey *ecdsa.PrivateKey
 }
 
-// ecdsaSignature represents an ECDSA signature for ASN.1 encoding (FIPS compliance)
+// ecdsaSignature represents an ECDSA signature for ASN.1 encoding (FIPS compliance).
 type ecdsaSignature struct {
 	R *big.Int
 	S *big.Int
@@ -186,7 +186,7 @@ func (*ecdsaP256Signer) KeyType() string {
 	return "ECDSA P-256"
 }
 
-// DetectAlgorithmFromPublicKey determines the algorithm from a public key
+// DetectAlgorithmFromPublicKey determines the algorithm from a public key.
 func DetectAlgorithmFromPublicKey(publicKey crypto.PublicKey) (CryptoAlgorithm, error) {
 	if publicKey == nil {
 		return "", fmt.Errorf("public key is nil")
@@ -205,7 +205,7 @@ func DetectAlgorithmFromPublicKey(publicKey crypto.PublicKey) (CryptoAlgorithm, 
 	}
 }
 
-// DetectAlgorithmFromPrivateKey determines the algorithm from a private key
+// DetectAlgorithmFromPrivateKey determines the algorithm from a private key.
 func DetectAlgorithmFromPrivateKey(privateKey crypto.PrivateKey) (CryptoAlgorithm, error) {
 	if privateKey == nil {
 		return "", fmt.Errorf("private key is nil")
@@ -224,7 +224,7 @@ func DetectAlgorithmFromPrivateKey(privateKey crypto.PrivateKey) (CryptoAlgorith
 	}
 }
 
-// ValidateAlgorithm checks if the algorithm is supported
+// ValidateAlgorithm checks if the algorithm is supported.
 func ValidateAlgorithm(algorithm CryptoAlgorithm) error {
 	switch algorithm {
 	case CryptoEd25519, CryptoECDSAP256:

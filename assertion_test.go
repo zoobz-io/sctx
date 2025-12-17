@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Helper function to create test certificate and key
+// Helper function to create test certificate and key.
 func createTestCertAndKey(t *testing.T) (*x509.Certificate, ed25519.PrivateKey) {
 	// Generate key pair
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -317,7 +317,7 @@ func TestAssertionValidationSteps(t *testing.T) {
 
 func TestValidateAssertionIntegration(t *testing.T) {
 	resetAdminForTesting()
-	
+
 	cert, priv := createTestCertAndKey(t)
 	ctx := context.Background()
 
@@ -326,10 +326,10 @@ func TestValidateAssertionIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	
+
 	certPool := x509.NewCertPool()
 	certPool.AddCert(cert)
-	
+
 	admin, err := NewAdminService[any](adminKey, certPool)
 	if err != nil {
 		t.Fatalf("Failed to create admin service: %v", err)
