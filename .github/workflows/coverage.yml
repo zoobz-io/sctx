@@ -25,7 +25,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.23'
+        go-version: '1.24'
         cache: true
     
     - name: Install dependencies
@@ -37,8 +37,8 @@ jobs:
       run: |
         # Core library coverage
         echo "=== Testing core library ==="
-        go test -v -race -coverprofile=coverage-core.out -covermode=atomic \
-          -coverpkg=github.com/zoobzio/sctx $(go list ./... | grep -v '/example/')
+        go test -tags=testing -v -race -coverprofile=coverage-core.out -covermode=atomic \
+          -coverpkg=github.com/zoobzio/sctx $(go list -tags=testing ./... | grep -v '/example/')
         
         # Generate coverage report
         go tool cover -func=coverage-core.out > coverage-summary.txt
