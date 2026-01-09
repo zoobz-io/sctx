@@ -6,25 +6,38 @@ run:
   tests: true
 linters:
   enable:
-    - bodyclose
-    - copyloopvar
-    - dupl
-    - errchkjson
+    # Security-critical linters
+    - gosec
     - errorlint
-    - goconst
+    - noctx
+    - bodyclose
+    - sqlclosecheck
+
+    # Code quality with security implications
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # Error handling
+    - errcheck
+    - errchkjson
+    - wastedassign
+
+    # Best practices
     - gocritic
+    - revive
+    - unconvert
+    - dupl
+    - goconst
     - godot
     - godox
-    - gosec
+    - gocyclo
     - misspell
     - nakedret
-    - noctx
     - prealloc
     - predeclared
-    - revive
-    - sqlclosecheck
-    - unconvert
-    - wastedassign
+    - copyloopvar
   settings:
     dupl:
       threshold: 150
@@ -143,6 +156,7 @@ linters:
           - errcheck
           - funlen
           - goconst
+          - gocyclo
           - govet
         path: _test\.go
     paths:

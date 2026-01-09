@@ -32,16 +32,16 @@ type StepCAContainer struct {
 
 // stepCAConfig represents step-ca configuration
 type stepCAConfig struct {
-	Root             []string         `json:"root"`
-	FederatedRoots   []string         `json:"federatedRoots"`
-	Crt              string           `json:"crt"`
-	Key              string           `json:"key"`
-	Address          string           `json:"address"`
-	DNSNames         []string         `json:"dnsNames"`
-	Logger           map[string]any   `json:"logger"`
-	DB               map[string]any   `json:"db"`
-	Authority        authorityConfig  `json:"authority"`
-	TLS              tlsConfig        `json:"tls"`
+	Root           []string        `json:"root"`
+	FederatedRoots []string        `json:"federatedRoots"`
+	Crt            string          `json:"crt"`
+	Key            string          `json:"key"`
+	Address        string          `json:"address"`
+	DNSNames       []string        `json:"dnsNames"`
+	Logger         map[string]any  `json:"logger"`
+	DB             map[string]any  `json:"db"`
+	Authority      authorityConfig `json:"authority"`
+	TLS            tlsConfig       `json:"tls"`
 }
 
 type authorityConfig struct {
