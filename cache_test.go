@@ -32,9 +32,8 @@ func TestCacheCleanup(t *testing.T) {
 	cache.Store(context.Background(), "valid", ctx2)
 
 	// Verify both exist
-	memCache := cache.(*memoryContextCache[any])
-	if memCache.Count() != 2 {
-		t.Errorf("Expected 2 contexts, got %d", memCache.Count())
+	if cache.Count() != 2 {
+		t.Errorf("Expected 2 contexts, got %d", cache.Count())
 	}
 
 	// Start cleanup
@@ -144,9 +143,8 @@ func TestCacheDelete(t *testing.T) {
 func TestCacheCount(t *testing.T) {
 	cache := newMemoryContextCache[any](5 * time.Minute)
 	ctx := context.Background()
-	memCache := cache.(*memoryContextCache[any])
 
-	if memCache.Count() != 0 {
+	if cache.Count() != 0 {
 		t.Error("Empty cache should have count 0")
 	}
 
@@ -158,8 +156,8 @@ func TestCacheCount(t *testing.T) {
 		cache.Store(ctx, string(rune('a'+i)), sctxContext)
 	}
 
-	if memCache.Count() != 5 {
-		t.Errorf("Expected count 5, got %d", memCache.Count())
+	if cache.Count() != 5 {
+		t.Errorf("Expected count 5, got %d", cache.Count())
 	}
 }
 
@@ -177,15 +175,15 @@ func TestCacheClear(t *testing.T) {
 		cache.Store(ctx, string(rune('a'+i)), sctxContext)
 	}
 
-	if memCache.Count() != 3 {
-		t.Errorf("Expected count 3, got %d", memCache.Count())
+	if cache.Count() != 3 {
+		t.Errorf("Expected count 3, got %d", cache.Count())
 	}
 
 	// Clear the cache
 	memCache.Clear()
 
-	if memCache.Count() != 0 {
-		t.Errorf("Expected count 0 after clear, got %d", memCache.Count())
+	if cache.Count() != 0 {
+		t.Errorf("Expected count 0 after clear, got %d", cache.Count())
 	}
 }
 

@@ -78,6 +78,10 @@ var (
 	// CacheExpired is emitted when a context expires during cleanup.
 	// Fields: FingerprintKey.
 	CacheExpired = capitan.NewSignal("sctx.cache.expired", "Security context expired during cache cleanup")
+
+	// CacheEvicted is emitted when a context is evicted due to cache size limits.
+	// Fields: FingerprintKey.
+	CacheEvicted = capitan.NewSignal("sctx.cache.evicted", "Security context evicted due to cache size limit")
 )
 
 // Event field keys.

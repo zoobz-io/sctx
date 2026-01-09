@@ -40,7 +40,7 @@ type adminService[M any] struct {
 
 	// Nonce tracking for replay protection
 	nonceMu    sync.RWMutex
-	nonceCache map[string]time.Time
+	nonceCache *boundedNonceCache
 }
 
 // createAdminService is the internal implementation of admin service creation.
@@ -73,7 +73,7 @@ func createAdminService[M any](privateKey crypto.PrivateKey, trustedCAs *x509.Ce
 		certPool:   trustedCAs,
 		cache:      cache,
 		signer:     signer,
-		nonceCache: make(map[string]time.Time),
+		nonceCache: newBoundedNonceCache(DefaultNonceOptions().MaxSize),
 	}
 
 	// Assertion validation now uses direct function calls - no pipeline setup needed
@@ -118,12 +118,7 @@ func (a *adminService[M]) Algorithm() CryptoAlgorithm {
 
 // cleanExpiredNonces removes expired nonces from the cache.
 func (a *adminService[M]) cleanExpiredNonces() {
-	now := time.Now()
-	for nonce, expiry := range a.nonceCache {
-		if now.After(expiry) {
-			delete(a.nonceCache, nonce)
-		}
-	}
+	a.nonceCache.CleanExpired()
 }
 
 // Cache operations for admin control
@@ -149,10 +144,7 @@ func (a *adminService[M]) GetContext(ctx context.Context, fingerprint string) (*
 
 // ActiveCount returns the number of active contexts.
 func (a *adminService[M]) ActiveCount() int {
-	if counter, ok := a.cache.(interface{ Count() int }); ok {
-		return counter.Count()
-	}
-	return -1 // Unknown
+	return a.cache.Count()
 }
 
 // SetPolicy sets the context policy function.

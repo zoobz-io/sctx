@@ -89,6 +89,43 @@ sctx includes several built-in security features:
 - **Memory Safety**: Go's memory management prevents buffer overflows
 - **Zero Dependencies**: Minimal external dependencies reduce attack surface
 
+## Certificate Chain Verification
+
+### Important Security Note
+
+**sctx does NOT independently verify full certificate chains.** This is by design.
+
+sctx is intended to operate behind an mTLS termination layer (reverse proxy, load balancer, or application server) that has already performed full certificate chain verification. When a client certificate reaches sctx, it has already been:
+
+1. Verified against the trusted CA chain
+2. Checked for expiration
+3. Validated for proper key usage
+4. Confirmed as not revoked (if CRL/OCSP is configured at the TLS layer)
+
+### What sctx Verifies
+
+When `Generate()` is called, sctx verifies:
+
+- The certificate is signed by a CA in the provided `trustedCAs` pool
+- The certificate has not expired
+- The assertion signature matches the certificate's public key
+- The assertion nonce has not been replayed
+
+### Deployment Requirements
+
+For secure operation, ensure your mTLS layer:
+
+- Validates the complete certificate chain to a trusted root
+- Checks certificate expiration
+- Optionally checks revocation status (CRL/OCSP)
+- Only passes verified client certificates to your application
+
+### Why This Design?
+
+1. **Avoid duplicate work** - Chain verification is expensive; mTLS already does it
+2. **Separation of concerns** - TLS layer handles transport security, sctx handles authorization
+3. **Flexibility** - Different mTLS implementations have different revocation strategies
+
 ## Automated Security Scanning
 
 This project uses:

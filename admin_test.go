@@ -400,18 +400,6 @@ func TestAdminActiveCount(t *testing.T) {
 	if count != 1 {
 		t.Errorf("Expected 1 active context, got %d", count)
 	}
-
-	// Test with cache that doesn't implement Count
-	type minimalCache struct {
-		ContextCache[any]
-	}
-	mockCache := &minimalCache{adminSvc.cache}
-	adminSvc.cache = mockCache
-
-	count = adminSvc.ActiveCount()
-	if count != -1 {
-		t.Errorf("Expected -1 for unknown count, got %d", count)
-	}
 }
 
 // TestAdminCustomPolicy tests using a custom policy function.
@@ -1014,7 +1002,7 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Verify nonce was added
 		adminSvc.nonceMu.Lock()
-		initialCount := len(adminSvc.nonceCache)
+		initialCount := adminSvc.nonceCache.Count()
 		adminSvc.nonceMu.Unlock()
 
 		if initialCount == 0 {
@@ -1023,8 +1011,8 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Manually add an expired nonce
 		adminSvc.nonceMu.Lock()
-		adminSvc.nonceCache["expired-nonce"] = time.Now().Add(-10 * time.Minute)
-		beforeCleanup := len(adminSvc.nonceCache)
+		adminSvc.nonceCache.addForTesting("expired-nonce", time.Now().Add(-10*time.Minute))
+		beforeCleanup := adminSvc.nonceCache.Count()
 		adminSvc.nonceMu.Unlock()
 
 		// Generate another token (should trigger cleanup)
@@ -1036,8 +1024,8 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Verify expired nonce was cleaned
 		adminSvc.nonceMu.Lock()
-		afterCleanup := len(adminSvc.nonceCache)
-		_, hasExpired := adminSvc.nonceCache["expired-nonce"]
+		afterCleanup := adminSvc.nonceCache.Count()
+		hasExpired := adminSvc.nonceCache.Contains("expired-nonce")
 		adminSvc.nonceMu.Unlock()
 
 		if hasExpired {
@@ -1060,9 +1048,9 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Manually add expired nonces
 		adminSvc.nonceMu.Lock()
-		adminSvc.nonceCache["expired-guard-1"] = time.Now().Add(-5 * time.Minute)
-		adminSvc.nonceCache["expired-guard-2"] = time.Now().Add(-10 * time.Minute)
-		beforeCleanup := len(adminSvc.nonceCache)
+		adminSvc.nonceCache.addForTesting("expired-guard-1", time.Now().Add(-5*time.Minute))
+		adminSvc.nonceCache.addForTesting("expired-guard-2", time.Now().Add(-10*time.Minute))
+		beforeCleanup := adminSvc.nonceCache.Count()
 		adminSvc.nonceMu.Unlock()
 
 		// Create guard (should trigger cleanup)
@@ -1073,9 +1061,9 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Verify expired nonces were cleaned
 		adminSvc.nonceMu.Lock()
-		afterCleanup := len(adminSvc.nonceCache)
-		_, hasExpired1 := adminSvc.nonceCache["expired-guard-1"]
-		_, hasExpired2 := adminSvc.nonceCache["expired-guard-2"]
+		afterCleanup := adminSvc.nonceCache.Count()
+		hasExpired1 := adminSvc.nonceCache.Contains("expired-guard-1")
+		hasExpired2 := adminSvc.nonceCache.Contains("expired-guard-2")
 		adminSvc.nonceMu.Unlock()
 
 		if hasExpired1 || hasExpired2 {
@@ -1096,8 +1084,8 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Manually add expired nonces
 		adminSvc.nonceMu.Lock()
-		adminSvc.nonceCache["expired-revoke-1"] = time.Now().Add(-1 * time.Hour)
-		beforeCleanup := len(adminSvc.nonceCache)
+		adminSvc.nonceCache.addForTesting("expired-revoke-1", time.Now().Add(-1*time.Hour))
+		beforeCleanup := adminSvc.nonceCache.Count()
 		adminSvc.nonceMu.Unlock()
 
 		// Revoke a context (should trigger cleanup)
@@ -1109,8 +1097,8 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Verify expired nonce was cleaned
 		adminSvc.nonceMu.Lock()
-		afterCleanup := len(adminSvc.nonceCache)
-		_, hasExpired := adminSvc.nonceCache["expired-revoke-1"]
+		afterCleanup := adminSvc.nonceCache.Count()
+		hasExpired := adminSvc.nonceCache.Contains("expired-revoke-1")
 		adminSvc.nonceMu.Unlock()
 
 		if hasExpired {
@@ -1136,7 +1124,7 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Add an expired nonce
 		adminSvc.nonceMu.Lock()
-		adminSvc.nonceCache["expired-read-test"] = time.Now().Add(-1 * time.Hour)
+		adminSvc.nonceCache.addForTesting("expired-read-test", time.Now().Add(-1*time.Hour))
 		adminSvc.nonceMu.Unlock()
 
 		// Perform read operations (should NOT trigger cleanup)
@@ -1145,7 +1133,7 @@ func TestNonceCleanupOnWriteOperations(t *testing.T) {
 
 		// Verify expired nonce is still there
 		adminSvc.nonceMu.Lock()
-		_, hasExpired := adminSvc.nonceCache["expired-read-test"]
+		hasExpired := adminSvc.nonceCache.Contains("expired-read-test")
 		adminSvc.nonceMu.Unlock()
 
 		if !hasExpired {
@@ -1186,11 +1174,11 @@ func TestNonceExpiryTiming(t *testing.T) {
 	adminSvc.nonceMu.Lock()
 	defer adminSvc.nonceMu.Unlock()
 
-	if len(adminSvc.nonceCache) != 1 {
-		t.Fatalf("Expected exactly one nonce in cache, got %d", len(adminSvc.nonceCache))
+	if adminSvc.nonceCache.Count() != 1 {
+		t.Fatalf("Expected exactly one nonce in cache, got %d", adminSvc.nonceCache.Count())
 	}
 
-	for nonce, expiry := range adminSvc.nonceCache {
+	for nonce, expiry := range adminSvc.nonceCache.allNonces() {
 		// Assertion expires in ~1 minute, nonce should expire in ~6 minutes
 		untilExpiry := time.Until(expiry)
 		if untilExpiry < 5*time.Minute || untilExpiry > 7*time.Minute {

@@ -2,6 +2,8 @@ module github.com/zoobzio/sctx
 
 go 1.24.0
 
+toolchain go1.25.0
+
 require (
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/zoobzio/capitan v0.0.13

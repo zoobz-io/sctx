@@ -21,6 +21,9 @@ type ContextCache[M any] interface {
 
 	// Start begins the cleanup goroutine
 	Start(shutdown chan struct{}, wg *sync.WaitGroup)
+
+	// Count returns the number of active contexts
+	Count() int
 }
 
 // memoryContextCache is an in-memory implementation of ContextCache.

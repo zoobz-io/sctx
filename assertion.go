@@ -276,7 +276,7 @@ func checkNonceStep[M any](ctx context.Context, ac *AssertionContext, admin *adm
 	admin.cleanExpiredNonces()
 
 	// Check if nonce was already used
-	if _, exists := admin.nonceCache[nonce]; exists {
+	if admin.nonceCache.Contains(nonce) {
 		capitan.Warn(ctx, AssertionRejected,
 			FingerprintKey.Field(fp),
 			ErrorKey.Field("nonce already used"),
@@ -285,7 +285,7 @@ func checkNonceStep[M any](ctx context.Context, ac *AssertionContext, admin *adm
 	}
 
 	// Store nonce with expiration
-	admin.nonceCache[nonce] = ac.Assertion.Claims.ExpiresAt.Add(5 * time.Minute)
+	admin.nonceCache.Add(nonce, ac.Assertion.Claims.ExpiresAt.Add(5*time.Minute))
 
 	return nil
 }
