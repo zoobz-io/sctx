@@ -40,7 +40,8 @@ jobs:
       - name: Validate go.mod
         run: |
           go mod tidy
-          git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum need updating" && exit 1)
+          cd testing && go mod tidy && cd ..
+          git diff --exit-code go.mod go.sum testing/go.mod testing/go.sum || (echo "go.mod/go.sum files need updating" && exit 1)
       
       - name: Run tests
         run: make test-race
@@ -79,6 +80,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
       
       - name: Upload Release Assets
         uses: actions/upload-artifact@v4

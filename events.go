@@ -39,6 +39,13 @@ var (
 	ContextRevoked = capitan.NewSignal("sctx.context.revoked", "Security context manually revoked")
 )
 
+// Principal lifecycle signals.
+var (
+	// PrincipalCreated is emitted when a principal is established from a certificate.
+	// Fields: FingerprintKey, CommonNameKey.
+	PrincipalCreated = capitan.NewSignal("sctx.principal.created", "Authenticated principal established from certificate")
+)
+
 // Assertion signals.
 var (
 	// AssertionValidated is emitted when an assertion passes validation.

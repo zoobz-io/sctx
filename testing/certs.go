@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"testing"
 	"time"
 )
 
@@ -192,7 +193,9 @@ func (cb *CertBuilder) SignedBy(ca *x509.Certificate, caKey crypto.PrivateKey) (
 
 // GenerateTestCertificates generates a complete certificate chain for testing.
 // Returns a root CA and a client certificate signed by the root.
-func GenerateTestCertificates() (*TestCertificates, error) {
+func GenerateTestCertificates(tb testing.TB) *TestCertificates {
+	tb.Helper()
+
 	// Generate root CA
 	rootCert, rootKey, err := NewCertBuilder().
 		WithCN("Test Root CA").
@@ -201,7 +204,7 @@ func GenerateTestCertificates() (*TestCertificates, error) {
 		AsCA().
 		SelfSigned()
 	if err != nil {
-		return nil, err
+		tb.Fatalf("failed to generate root CA: %v", err)
 	}
 
 	// Generate client certificate
@@ -214,7 +217,7 @@ func GenerateTestCertificates() (*TestCertificates, error) {
 		WithEmailAddresses("test@example.com").
 		SignedBy(rootCert, rootKey)
 	if err != nil {
-		return nil, err
+		tb.Fatalf("failed to generate client certificate: %v", err)
 	}
 
 	// Create cert pool
@@ -227,14 +230,21 @@ func GenerateTestCertificates() (*TestCertificates, error) {
 		ClientCert: clientCert,
 		ClientKey:  clientKey,
 		CertPool:   certPool,
-	}, nil
+	}
 }
 
 // GenerateAdditionalClientCert generates an additional client certificate signed by the CA.
-func GenerateAdditionalClientCert(tc *TestCertificates, commonName string) (*x509.Certificate, crypto.PrivateKey, error) {
-	return NewCertBuilder().
+func GenerateAdditionalClientCert(tb testing.TB, tc *TestCertificates, commonName string) (*x509.Certificate, crypto.PrivateKey) {
+	tb.Helper()
+
+	cert, key, err := NewCertBuilder().
 		WithCN(commonName).
 		WithOrganization("Test Client Organization").
 		WithValidity(90*24*time.Hour).
 		SignedBy(tc.RootCA, tc.RootCAKey)
+	if err != nil {
+		tb.Fatalf("failed to generate additional client certificate: %v", err)
+	}
+
+	return cert, key
 }

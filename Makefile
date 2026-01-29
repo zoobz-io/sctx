@@ -76,6 +76,13 @@ install-hooks:
 	@chmod +x .git/hooks/pre-commit
 	@echo "Git hooks installed."
 
+## tidy: Tidy all module dependencies
+tidy:
+	@echo "Tidying root module..."
+	@go mod tidy
+	@echo "Tidying testing module..."
+	@cd testing && go mod tidy
+
 ## check: Run tests and lint (quick check)
 check: test lint
 	@echo "All checks passed!"

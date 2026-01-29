@@ -36,6 +36,12 @@ jobs:
     - name: Download dependencies
       run: go mod download
 
+    - name: Validate go.mod files
+      run: |
+        go mod tidy
+        cd testing && go mod tidy && cd ..
+        git diff --exit-code go.mod go.sum testing/go.mod testing/go.sum || (echo "go.mod/go.sum files need updating" && exit 1)
+
     - name: Run unit tests with race detection
       run: go test -tags=testing -v -race -timeout=5m ./...
 
@@ -104,13 +110,6 @@ jobs:
       
     - name: Generate coverage report
       run: make coverage
-      
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.out
-        flags: unittests
-        name: codecov-umbrella
 
     - name: Upload coverage report
       uses: actions/upload-artifact@v4

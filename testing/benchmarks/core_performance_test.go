@@ -19,18 +19,12 @@ import (
 // Token Operation Benchmarks
 
 func BenchmarkGenerate(b *testing.B) {
-	admin, testCerts, err := sctxtesting.TestAdmin[any]()
-	if err != nil {
-		b.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := sctxtesting.TestAdmin[any](b)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Generate a new client cert for each iteration (cold path)
-		clientCert, clientKey, err := sctxtesting.GenerateAdditionalClientCert(testCerts, "bench-client")
-		if err != nil {
-			b.Fatalf("GenerateAdditionalClientCert failed: %v", err)
-		}
+		clientCert, clientKey := sctxtesting.GenerateAdditionalClientCert(b, testCerts, "bench-client")
 
 		assertion, err := sctx.CreateAssertion(clientKey, clientCert)
 		if err != nil {
@@ -45,10 +39,7 @@ func BenchmarkGenerate(b *testing.B) {
 }
 
 func BenchmarkGenerate_Cached(b *testing.B) {
-	admin, testCerts, err := sctxtesting.TestAdmin[any]()
-	if err != nil {
-		b.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := sctxtesting.TestAdmin[any](b)
 
 	// Generate initial token to populate cache
 	assertion, err := sctx.CreateAssertion(testCerts.ClientKey, testCerts.ClientCert)
@@ -79,10 +70,7 @@ func BenchmarkGenerate_Cached(b *testing.B) {
 // Guard Operation Benchmarks
 
 func BenchmarkCreateGuard(b *testing.B) {
-	admin, testCerts, err := sctxtesting.TestAdmin[any]()
-	if err != nil {
-		b.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := sctxtesting.TestAdmin[any](b)
 
 	// Set policy with permissions
 	_ = admin.SetPolicy(func(_ *x509.Certificate) (*sctx.Context[any], error) {
@@ -112,10 +100,7 @@ func BenchmarkCreateGuard(b *testing.B) {
 }
 
 func BenchmarkGuardValidate(b *testing.B) {
-	admin, testCerts, err := sctxtesting.TestAdmin[any]()
-	if err != nil {
-		b.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := sctxtesting.TestAdmin[any](b)
 
 	_ = admin.SetPolicy(func(_ *x509.Certificate) (*sctx.Context[any], error) {
 		return &sctx.Context[any]{
@@ -158,10 +143,7 @@ func BenchmarkGuardValidate_MultiplePermissions(b *testing.B) {
 		}
 
 		b.Run(string(rune('0'+count))+"_permissions", func(b *testing.B) {
-			admin, testCerts, err := sctxtesting.TestAdmin[any]()
-			if err != nil {
-				b.Fatalf("TestAdmin failed: %v", err)
-			}
+			admin, testCerts := sctxtesting.TestAdmin[any](b)
 
 			_ = admin.SetPolicy(func(_ *x509.Certificate) (*sctx.Context[any], error) {
 				return &sctx.Context[any]{
@@ -325,10 +307,7 @@ func BenchmarkECDSA_Verify(b *testing.B) {
 // Assertion Benchmarks
 
 func BenchmarkCreateAssertion(b *testing.B) {
-	testCerts, err := sctxtesting.GenerateTestCertificates()
-	if err != nil {
-		b.Fatalf("GenerateTestCertificates failed: %v", err)
-	}
+	testCerts := sctxtesting.GenerateTestCertificates(b)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -342,10 +321,7 @@ func BenchmarkCreateAssertion(b *testing.B) {
 // Parallel Benchmarks
 
 func BenchmarkGenerate_Parallel(b *testing.B) {
-	admin, testCerts, err := sctxtesting.TestAdmin[any]()
-	if err != nil {
-		b.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := sctxtesting.TestAdmin[any](b)
 
 	// Pre-generate many client certs
 	const numClients = 100
@@ -355,10 +331,7 @@ func BenchmarkGenerate_Parallel(b *testing.B) {
 	}, numClients)
 
 	for i := 0; i < numClients; i++ {
-		cert, key, err := sctxtesting.GenerateAdditionalClientCert(testCerts, "parallel-client")
-		if err != nil {
-			b.Fatalf("GenerateAdditionalClientCert failed: %v", err)
-		}
+		cert, key := sctxtesting.GenerateAdditionalClientCert(b, testCerts, "parallel-client")
 		clients[i].cert = cert
 		clients[i].key = key
 	}
@@ -388,10 +361,7 @@ func BenchmarkGenerate_Parallel(b *testing.B) {
 }
 
 func BenchmarkGuardValidate_Parallel(b *testing.B) {
-	admin, testCerts, err := sctxtesting.TestAdmin[any]()
-	if err != nil {
-		b.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := sctxtesting.TestAdmin[any](b)
 
 	_ = admin.SetPolicy(func(_ *x509.Certificate) (*sctx.Context[any], error) {
 		return &sctx.Context[any]{

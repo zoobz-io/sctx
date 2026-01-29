@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"testing"
 
 	"github.com/zoobzio/sctx"
 )
@@ -40,22 +41,22 @@ func WithECDSA() TestAdminOption {
 }
 
 // TestAdmin creates an admin service configured for testing.
-// Returns the admin, certificate pool, and the admin's private key.
+// Returns the admin and test certificates.
 // Note: This uses the internal createAdminService to avoid singleton restrictions.
-func TestAdmin[M any](opts ...TestAdminOption) (sctx.Admin[M], *TestCertificates, error) {
+func TestAdmin[M any](tb testing.TB, opts ...TestAdminOption) (sctx.Admin[M], *TestCertificates) {
+	tb.Helper()
+
 	cfg := &testAdminConfig{keyType: keyTypeEd25519}
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
 	// Generate test certificates
-	testCerts, err := GenerateTestCertificates()
-	if err != nil {
-		return nil, nil, err
-	}
+	testCerts := GenerateTestCertificates(tb)
 
 	// Generate admin key (separate from client keys)
 	var adminKey crypto.PrivateKey
+	var err error
 	switch cfg.keyType {
 	case keyTypeECDSA:
 		adminKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -63,15 +64,15 @@ func TestAdmin[M any](opts ...TestAdminOption) (sctx.Admin[M], *TestCertificates
 		_, adminKey, err = ed25519.GenerateKey(rand.Reader)
 	}
 	if err != nil {
-		return nil, nil, err
+		tb.Fatalf("failed to generate admin key: %v", err)
 	}
 
 	// Create admin service - must reset singleton for testing
 	sctx.ResetAdminForTesting()
 	admin, err := sctx.NewAdminService[M](adminKey, testCerts.CertPool)
 	if err != nil {
-		return nil, nil, err
+		tb.Fatalf("failed to create admin service: %v", err)
 	}
 
-	return admin, testCerts, nil
+	return admin, testCerts
 }

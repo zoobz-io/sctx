@@ -41,3 +41,15 @@ type Guard interface {
 	Validate(ctx context.Context, tokens ...SignedToken) error
 	Permissions() []string
 }
+
+// Principal represents an authenticated in-process consumer with a defined role.
+type Principal interface {
+	// Token returns the principal's signed token.
+	Token() SignedToken
+
+	// Inject embeds the principal's token into a context.Context.
+	Inject(ctx context.Context) context.Context
+
+	// Guard creates a context-aware guard that extracts tokens from context.Context.
+	Guard(ctx context.Context, requiredPermissions ...string) (Guard, error)
+}

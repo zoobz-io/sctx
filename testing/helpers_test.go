@@ -19,10 +19,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestTokenCapture(t *testing.T) {
-	admin, testCerts, err := TestAdmin[any]()
-	if err != nil {
-		t.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := TestAdmin[any](t)
 
 	capture := NewTokenCapture()
 	defer capture.Close()
@@ -66,10 +63,7 @@ func TestTokenCapture_WaitForCount(t *testing.T) {
 }
 
 func TestTokenCapture_Reset(t *testing.T) {
-	admin, testCerts, err := TestAdmin[any]()
-	if err != nil {
-		t.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := TestAdmin[any](t)
 
 	capture := NewTokenCapture()
 	defer capture.Close()
@@ -96,10 +90,7 @@ func TestTokenCapture_Reset(t *testing.T) {
 }
 
 func TestGuardRecorder(t *testing.T) {
-	admin, testCerts, err := TestAdmin[any]()
-	if err != nil {
-		t.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := TestAdmin[any](t)
 
 	// Set policy that grants permissions
 	_ = admin.SetPolicy(func(_ *x509.Certificate) (*sctx.Context[any], error) {
@@ -241,10 +232,7 @@ func TestCertBuilder_ECDSA(t *testing.T) {
 }
 
 func TestGenerateTestCertificates(t *testing.T) {
-	testCerts, err := GenerateTestCertificates()
-	if err != nil {
-		t.Fatalf("GenerateTestCertificates failed: %v", err)
-	}
+	testCerts := GenerateTestCertificates(t)
 
 	if testCerts.RootCA == nil {
 		t.Error("RootCA should not be nil")
@@ -270,15 +258,9 @@ func TestGenerateTestCertificates(t *testing.T) {
 }
 
 func TestGenerateAdditionalClientCert(t *testing.T) {
-	testCerts, err := GenerateTestCertificates()
-	if err != nil {
-		t.Fatalf("GenerateTestCertificates failed: %v", err)
-	}
+	testCerts := GenerateTestCertificates(t)
 
-	additionalCert, additionalKey, err := GenerateAdditionalClientCert(testCerts, "additional-client")
-	if err != nil {
-		t.Fatalf("GenerateAdditionalClientCert failed: %v", err)
-	}
+	additionalCert, additionalKey := GenerateAdditionalClientCert(t, testCerts, "additional-client")
 
 	if additionalCert.Subject.CommonName != "additional-client" {
 		t.Errorf("expected CN 'additional-client', got %q", additionalCert.Subject.CommonName)
@@ -293,10 +275,7 @@ func TestGenerateAdditionalClientCert(t *testing.T) {
 }
 
 func TestTestAdmin(t *testing.T) {
-	admin, testCerts, err := TestAdmin[any]()
-	if err != nil {
-		t.Fatalf("TestAdmin failed: %v", err)
-	}
+	admin, testCerts := TestAdmin[any](t)
 
 	if admin == nil {
 		t.Error("admin should not be nil")
@@ -307,15 +286,46 @@ func TestTestAdmin(t *testing.T) {
 }
 
 func TestTestAdmin_WithECDSA(t *testing.T) {
-	admin, testCerts, err := TestAdmin[any](WithECDSA())
-	if err != nil {
-		t.Fatalf("TestAdmin with ECDSA failed: %v", err)
-	}
+	admin, testCerts := TestAdmin[any](t, WithECDSA())
 
 	if admin == nil {
 		t.Error("admin should not be nil")
 	}
 	if testCerts == nil {
 		t.Error("testCerts should not be nil")
+	}
+}
+
+func TestTestPrincipal(t *testing.T) {
+	admin, testCerts := TestAdmin[any](t)
+
+	ctx := context.Background()
+	p := TestPrincipal[any](ctx, t, admin, testCerts.ClientCert, testCerts.ClientKey)
+
+	if p.Token() == "" {
+		t.Error("principal token should not be empty")
+	}
+}
+
+func TestTokenFromContext(t *testing.T) {
+	admin, testCerts := TestAdmin[any](t)
+
+	ctx := context.Background()
+	p := TestPrincipal[any](ctx, t, admin, testCerts.ClientCert, testCerts.ClientKey)
+
+	// Inject and extract
+	injected := p.Inject(ctx)
+	token, ok := TokenFromContext(injected)
+	if !ok {
+		t.Fatal("expected token in context")
+	}
+	if token != p.Token() {
+		t.Error("extracted token does not match principal token")
+	}
+
+	// Missing token
+	_, ok = TokenFromContext(context.Background())
+	if ok {
+		t.Error("expected no token in empty context")
 	}
 }

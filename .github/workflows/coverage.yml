@@ -33,10 +33,22 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        # Core library coverage
+        # Unit test coverage
         echo "=== Testing core library ==="
-        go test -tags=testing -v -race -coverprofile=coverage.out -covermode=atomic \
+        go test -tags=testing -v -race -coverprofile=coverage-unit.out -covermode=atomic \
           -coverpkg=github.com/zoobzio/sctx $(go list -tags=testing ./... | grep -v '/example/')
+
+        # Integration test coverage
+        echo "=== Testing integration ==="
+        go test -tags=integration,testing -v -coverprofile=coverage-integration.out -covermode=atomic \
+          -coverpkg=github.com/zoobzio/sctx ./testing/integration/... || true
+
+        # Merge coverage profiles
+        echo "mode: atomic" > coverage.out
+        tail -n +2 coverage-unit.out >> coverage.out
+        if [ -f coverage-integration.out ]; then
+          tail -n +2 coverage-integration.out >> coverage.out
+        fi
 
         go tool cover -func=coverage.out > coverage-summary.txt
         echo "Coverage Summary:"

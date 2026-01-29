@@ -19,8 +19,8 @@ vendor/
 dist/
 .dist/
 
-# Go workspace file
-go.work
+# Go workspace files
+go.work.sum
 
 # IDE files
 .idea/
