@@ -1,6 +1,6 @@
 package sctx
 
-import "github.com/zoobzio/capitan"
+import "github.com/zoobz-io/capitan"
 
 // Token lifecycle signals.
 var (

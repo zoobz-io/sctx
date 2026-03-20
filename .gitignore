@@ -1,41 +1,34 @@
-# Binaries for programs and plugins
+# Binaries
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 
-# Test binary, built with `go test -c`
+# Test files
 *.test
-
-# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
-coverage.*
+coverage.out
+coverage.html
+coverage.txt
 
-# Dependency directories
-vendor/
+# Profiling
+*.prof
+*.pprof
 
-# Build artifacts
-dist/
-.dist/
-
-# Go workspace files
-go.work.sum
-
-# IDE files
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-*~
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
 
-# Hidden shotel directory (temporary)
-.shotel/
+# Build
+dist/
+vendor/
 
-# Demo binaries
-demo/sctx-demo
-demo/demo-signing-*.pem
+# Claude
+.claude/

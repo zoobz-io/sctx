@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zoobzio/sctx"
-	"github.com/zoobzio/sctx/testing/integration/ca"
+	"github.com/zoobz-io/sctx"
+	"github.com/zoobz-io/sctx/testing/integration/ca"
 )
 
 // TestIntegration_Rotation_NewCertSameIdentity tests certificate rotation with same CN.
