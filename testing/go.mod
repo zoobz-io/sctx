@@ -1,15 +1,15 @@
-module github.com/zoobzio/sctx/testing
+module github.com/zoobz-io/sctx/testing
 
 go 1.24.0
 
 toolchain go1.25.0
 
-replace github.com/zoobzio/sctx => ../
+replace github.com/zoobz-io/sctx => ../
 
 require (
 	github.com/testcontainers/testcontainers-go v0.40.0
-	github.com/zoobzio/capitan v0.0.13
-	github.com/zoobzio/sctx v0.0.0
+	github.com/zoobz-io/capitan v1.0.2
+	github.com/zoobz-io/sctx v0.0.0
 )
 
 require (

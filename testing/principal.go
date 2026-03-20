@@ -8,7 +8,7 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/zoobzio/sctx"
+	"github.com/zoobz-io/sctx"
 )
 
 // TokenFromContext is a convenience re-export for testing.

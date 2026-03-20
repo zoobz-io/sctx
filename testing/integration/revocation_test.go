@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zoobzio/capitan"
-	"github.com/zoobzio/sctx"
-	"github.com/zoobzio/sctx/testing/integration/ca"
+	"github.com/zoobz-io/capitan"
+	"github.com/zoobz-io/sctx"
+	"github.com/zoobz-io/sctx/testing/integration/ca"
 )
 
 // TestIntegration_Revocation_ImmediateInvalidation tests immediate context invalidation.

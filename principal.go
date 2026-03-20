@@ -6,7 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 
-	"github.com/zoobzio/capitan"
+	"github.com/zoobz-io/capitan"
 )
 
 // contextKey is the unexported key type for embedding tokens in context.Context.

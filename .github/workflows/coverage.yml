@@ -2,103 +2,38 @@ name: Coverage
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
   pull_request:
-    branches: [ main, master ]
-
-permissions:
-  contents: read
-  checks: write
-  pull-requests: write
+    branches: [main]
 
 jobs:
   coverage:
-    name: Test Coverage Analysis
+    name: Coverage
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.24'
-        cache: true
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
 
-    - name: Install dependencies
-      run: go mod download
+      - name: Generate coverage
+        run: go test -tags testing -race -coverprofile=coverage.out -covermode=atomic ./...
 
-    - name: Run tests with coverage
-      run: |
-        # Unit test coverage
-        echo "=== Testing core library ==="
-        go test -tags=testing -v -race -coverprofile=coverage-unit.out -covermode=atomic \
-          -coverpkg=github.com/zoobzio/sctx $(go list -tags=testing ./... | grep -v '/example/')
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
+          flags: unittests
+          name: codecov-sctx
+          fail_ci_if_error: true
 
-        # Integration test coverage
-        echo "=== Testing integration ==="
-        go test -tags=integration,testing -v -coverprofile=coverage-integration.out -covermode=atomic \
-          -coverpkg=github.com/zoobzio/sctx ./testing/integration/... || true
-
-        # Merge coverage profiles
-        echo "mode: atomic" > coverage.out
-        tail -n +2 coverage-unit.out >> coverage.out
-        if [ -f coverage-integration.out ]; then
-          tail -n +2 coverage-integration.out >> coverage.out
-        fi
-
-        go tool cover -func=coverage.out > coverage-summary.txt
-        echo "Coverage Summary:"
-        tail -1 coverage-summary.txt
-        go tool cover -html=coverage.out -o coverage.html
-
-    - name: Test examples (verification only)
-      run: |
-        echo "=== Testing examples (no coverage tracking) ==="
-        for dir in example/*/; do
-          if [ -f "$dir/go.mod" ]; then
-            example_name=$(basename "$dir")
-            echo "Testing $example_name"
-            (cd "$dir" && go test -v -race ./... || true)
-          fi
-        done
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        files: ./coverage.out
-        flags: unit
-        name: sctx-coverage
-        fail_ci_if_error: false
-        verbose: true
-
-    - name: Generate coverage badge
-      run: |
-        COVERAGE=$(go tool cover -func=coverage.out | tail -1 | grep -oE '[0-9]+\.[0-9]+' | tail -1)
-        echo "Coverage: $COVERAGE%"
-        echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
-
-    - name: Upload coverage artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-reports
-        path: |
-          coverage.out
-          coverage.html
-          coverage-summary.txt
-        retention-days: 30
-
-    - name: Coverage summary
-      run: |
-        echo "### 📊 Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Total Coverage:** ${{ env.COVERAGE }}%" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "#### Coverage by Package" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        head -n -1 coverage-summary.txt >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+      - name: Coverage summary
+        run: |
+          go tool cover -func=coverage.out | tail -1
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          go tool cover -func=coverage.out | tail -1 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zoobzio/capitan"
+	"github.com/zoobz-io/capitan"
 )
 
 // ContextCache manages active contexts with automatic cleanup.

@@ -1,168 +1,39 @@
-# GoReleaser configuration for sctx - a Go library for context chaining
-# This configuration is optimized for a library package (no binaries in root)
-
 version: 2
 
-# Set project name
-project_name: sctx
-
-# Output directory
-dist: .dist
-
-# Build configuration
 builds:
-  # Skip building binaries for the main library since it's a library package
   - skip: true
 
-# Optional: Build example binaries as demonstration assets
-# Uncomment if you want to include example binaries in releases
-# builds:
-#   - id: basic-example
-#     main: ./example/basic/main.go
-#     binary: basic-example
-#     goos:
-#       - linux
-#       - darwin
-#       - windows
-#     goarch:
-#       - amd64
-#       - arm64
-
-# Archive configuration
-archives:
-  - id: source
-    # Include source files for library distribution
-    files:
-      - "*.go"
-      - "go.mod"
-      - "go.sum"
-      - "LICENSE"
-      - "README.md"
-      - "Makefile"
-      - "docs/**/*"
-      - "example/**/*"
-      - ".golangci.yml"
-    name_template: "{{ .ProjectName }}_{{ .Version }}_source"
-
-# Checksum configuration
-checksum:
-  name_template: "checksums.txt"
-  algorithm: sha256
-
-# Changelog configuration
 changelog:
-  use: github
   sort: asc
-  abbrev: 7
   groups:
-    - title: "✨ Features"
+    - title: Features
       regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
       order: 0
-    - title: "🐛 Bug Fixes"
+    - title: Bug Fixes
       regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
       order: 1
-    - title: "⚡ Performance"
-      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+    - title: Documentation
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
       order: 2
-    - title: "♻️ Refactoring"
-      regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
-      order: 3
-    - title: "📚 Documentation"
-      regexp: '^.*?docs?(\([[:word:]]+\))??!?:.+$'
-      order: 4
-    - title: "🧪 Testing"
-      regexp: '^.*?test(\([[:word:]]+\))??!?:.+$'
-      order: 5
-    - title: "🔧 Maintenance"
-      regexp: '^.*?chore(\([[:word:]]+\))??!?:.+$'
-      order: 6
-    - title: "🏗️ Build System"
-      regexp: '^.*?build(\([[:word:]]+\))??!?:.+$'
-      order: 7
-    - title: "📦 Dependencies"
-      regexp: '^.*?deps?(\([[:word:]]+\))??!?:.+$'
-      order: 8
-    - title: "Other Changes"
+    - title: Others
       order: 999
   filters:
     exclude:
-      - "^Merge"
-      - "^merge"
-      - "^wip"
-      - "^WIP"
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
 
-# Release configuration
 release:
   github:
-    owner: zoobzio
+    owner: zoobz-io
     name: sctx
-  
-  # Release name template
-  name_template: "{{ .ProjectName }} v{{ .Version }}"
-  
-  # Draft release initially (can be changed in workflow)
   draft: false
-  
-  # Mark as prerelease for beta/rc versions
   prerelease: auto
-  
-  # Release notes mode
-  mode: append
-  
-  # Custom release header
   header: |
-    ## sctx v{{ .Version }}
-    
-    Type-safe, composable context chaining for Go with zero dependencies.
-    
-    ### Installation
-    
-    ```bash
-    go get github.com/zoobzio/sctx@v{{ .Version }}
-    ```
-    
-    ### Requirements
-    - Go 1.21 or higher
-    
-  # Custom release footer
+    ## What's Changed
   footer: |
-    ---
-    
-    **Full Documentation:** https://github.com/zoobzio/sctx/tree/v{{ .Version }}/docs
-    **Examples:** https://github.com/zoobzio/sctx/tree/v{{ .Version }}/example
-    
-    Thanks to all contributors!
-
-# Announce releases (optional)
-announce:
-  skip: true
-  # Uncomment to enable Discord/Slack/Twitter announcements
-  # discord:
-  #   enabled: true
-  #   message_template: "sctx {{ .Tag }} has been released! Check it out at {{ .ReleaseURL }}"
-
-# Snapshot configuration (for testing)
-snapshot:
-  version_template: "{{ .Tag }}-next"
-
-# Skip upload to package managers (since this is a Go module)
-# nfpms section is omitted entirely since we're not building packages
-
-# Docker configuration (skip for library)
-# dockers section is omitted entirely since we're not building Docker images
-
-# Source configuration
-source:
-  enabled: true
-  name_template: "{{ .ProjectName }}_{{ .Version }}_source"
-
-# Git configuration
-git:
-  # Tag sort order
-  tag_sort: -version:refname
-  
-  # Skip commits from these paths in changelog
-  ignore_tags:
-    - ".*-rc.*"
-    - ".*-beta.*"
-    - ".*-alpha.*"
+    ## Installation
+    ```bash
+    go get github.com/zoobz-io/sctx@{{ .Tag }}
+    ```

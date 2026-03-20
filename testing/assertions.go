@@ -6,7 +6,7 @@ import (
 	"crypto"
 	"crypto/x509"
 
-	"github.com/zoobzio/sctx"
+	"github.com/zoobz-io/sctx"
 )
 
 // CreateAssertion is a convenience function to create assertions for testing.

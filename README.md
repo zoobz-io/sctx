@@ -1,13 +1,13 @@
 # sctx
 
-[![CI Status](https://github.com/zoobzio/sctx/workflows/CI/badge.svg)](https://github.com/zoobzio/sctx/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/zoobzio/sctx/graph/badge.svg?branch=main)](https://codecov.io/gh/zoobzio/sctx)
-[![Go Report Card](https://goreportcard.com/badge/github.com/zoobzio/sctx)](https://goreportcard.com/report/github.com/zoobzio/sctx)
-[![CodeQL](https://github.com/zoobzio/sctx/workflows/CodeQL/badge.svg)](https://github.com/zoobzio/sctx/security/code-scanning)
-[![Go Reference](https://pkg.go.dev/badge/github.com/zoobzio/sctx.svg)](https://pkg.go.dev/github.com/zoobzio/sctx)
-[![License](https://img.shields.io/github/license/zoobzio/sctx)](LICENSE)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/zoobzio/sctx)](go.mod)
-[![Release](https://img.shields.io/github/v/release/zoobzio/sctx)](https://github.com/zoobzio/sctx/releases)
+[![CI Status](https://github.com/zoobz-io/sctx/workflows/CI/badge.svg)](https://github.com/zoobz-io/sctx/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/zoobz-io/sctx/graph/badge.svg?branch=main)](https://codecov.io/gh/zoobz-io/sctx)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zoobz-io/sctx)](https://goreportcard.com/report/github.com/zoobz-io/sctx)
+[![CodeQL](https://github.com/zoobz-io/sctx/workflows/CodeQL/badge.svg)](https://github.com/zoobz-io/sctx/security/code-scanning)
+[![Go Reference](https://pkg.go.dev/badge/github.com/zoobz-io/sctx.svg)](https://pkg.go.dev/github.com/zoobz-io/sctx)
+[![License](https://img.shields.io/github/license/zoobz-io/sctx)](LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/zoobz-io/sctx)](go.mod)
+[![Release](https://img.shields.io/github/v/release/zoobz-io/sctx)](https://github.com/zoobz-io/sctx/releases)
 
 Certificate-based security contexts for Go.
 
@@ -43,7 +43,7 @@ No JWT parsing. No external identity provider. Your certificates are your identi
 ## Install
 
 ```bash
-go get github.com/zoobzio/sctx
+go get github.com/zoobz-io/sctx
 ```
 
 Requires Go 1.24+.
@@ -60,7 +60,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/zoobzio/sctx"
+    "github.com/zoobz-io/sctx"
 )
 
 type UserMeta struct {
@@ -120,7 +120,7 @@ func main() {
 - **Delegatable** — Token holders create guards for others to use
 - **Zero shared secrets** — Only public keys needed for validation
 - **Instantly revocable** — Revoke by fingerprint, all guards reject immediately
-- **Observable** — Every operation emits [capitan](https://github.com/zoobzio/capitan) events
+- **Observable** — Every operation emits [capitan](https://github.com/zoobz-io/capitan) events
 
 ## PKI-Native Authorization
 

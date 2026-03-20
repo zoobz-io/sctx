@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zoobzio/capitan"
-	"github.com/zoobzio/sctx"
+	"github.com/zoobz-io/capitan"
+	"github.com/zoobz-io/sctx"
 )
 
 // CapturedToken represents a captured token generation event.

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zoobzio/capitan"
-	"github.com/zoobzio/sctx"
+	"github.com/zoobz-io/capitan"
+	"github.com/zoobz-io/sctx"
 )
 
 func TestMain(m *testing.M) {

@@ -10,7 +10,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/zoobzio/sctx"
+	"github.com/zoobz-io/sctx"
 )
 
 // Key type constants.

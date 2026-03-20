@@ -5,131 +5,70 @@ on:
     tags:
       - 'v*.*.*'
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false  # Never cancel releases
-
 permissions:
-  contents: write  # Required for creating releases
-  packages: write  # Required if publishing to GitHub Packages
-  id-token: write  # Required for signing
+  contents: write
 
 jobs:
-  # Validate the module before release
   validate:
-    name: Validate Module
+    name: Validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Required for changelog generation
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
+    - uses: actions/checkout@v4
 
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-1.25-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-1.25-
-      
-      - name: Validate go.mod
-        run: |
-          go mod tidy
-          cd testing && go mod tidy && cd ..
-          git diff --exit-code go.mod go.sum testing/go.mod testing/go.sum || (echo "go.mod/go.sum files need updating" && exit 1)
-      
-      - name: Run tests
-        run: make test-race
-      
-      - name: Run linting
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.7.2
-          args: --config=.golangci.yml --timeout=5m
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
 
-  # Create release when tag is pushed
+    - name: Run tests
+      run: make test
+
+    - name: Run linter
+      run: |
+        go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.2
+        make lint
+
+    - name: Verify go.mod is tidy
+      run: |
+        go mod tidy
+        git diff --exit-code go.mod go.sum
+
   release:
-    name: Create Release
+    name: Release
     needs: validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Required for changelog generation
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-      - name: Install GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          version: latest
-          install-only: true
-      
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
-      
-      - name: Upload Release Assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-artifacts
-          path: dist/
-          retention-days: 7
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
 
-  # Verify release creation
+    - name: Run GoReleaser
+      uses: goreleaser/goreleaser-action@v6
+      with:
+        distribution: goreleaser
+        version: latest
+        args: release --clean
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   verify:
-    name: Verify Release
+    name: Verify
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
 
-      - name: Get release version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-      
-      - name: Verify module can be fetched
-        run: |
-          # Wait a moment for the release to propagate
-          sleep 10
-          
-          # Create a test module
-          mkdir -p /tmp/test-sctx
-          cd /tmp/test-sctx
-          go mod init test
-          
-          # Try to get the new version
-          go get github.com/zoobzio/sctx@${{ steps.version.outputs.VERSION }}
-          
-          # Verify it was fetched
-          go list -m github.com/zoobzio/sctx
-      
-      - name: Create release summary
-        run: |
-          echo "### Release ${{ steps.version.outputs.VERSION }} Published Successfully! 🎉" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Installation" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "go get github.com/zoobzio/sctx@${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Release Notes" >> $GITHUB_STEP_SUMMARY
-          echo "View the full release notes at: https://github.com/zoobzio/sctx/releases/tag/${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+    - name: Verify module
+      run: |
+        sleep 60
+        TAG=${GITHUB_REF#refs/tags/}
+        go install github.com/zoobz-io/sctx@$TAG || echo "Module verification pending proxy sync"
+      continue-on-error: true

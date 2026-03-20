@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zoobzio/capitan"
+	"github.com/zoobz-io/capitan"
 )
 
 // SignedAssertion represents a signed claim proving private key possession.

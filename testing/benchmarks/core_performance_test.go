@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zoobzio/sctx"
-	sctxtesting "github.com/zoobzio/sctx/testing"
+	"github.com/zoobz-io/sctx"
+	sctxtesting "github.com/zoobz-io/sctx/testing"
 )
 
 // Token Operation Benchmarks
