@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -143,7 +145,6 @@ func TestGenerateTrusted(t *testing.T) {
 
 		_, pk, _ := ed25519.GenerateKey(rand.Reader)
 		a, _ := NewAdminService[any](pk, testCerts.CertPool)
-		_ = a.SetPolicy(nil) // This should fail, but let's test the ErrNoPolicy path
 
 		// The default policy is set during creation, so we need to nil it out
 		adminSvc := a.(*adminService[any])
@@ -156,6 +157,65 @@ func TestGenerateTrusted(t *testing.T) {
 		_, err := a.GenerateTrusted(context.Background(), freshCert)
 		if err == nil {
 			t.Fatal("expected ErrNoPolicy")
+		}
+	})
+
+	t.Run("policy error is propagated", func(t *testing.T) {
+		resetAdminForTesting()
+
+		_, pk, _ := ed25519.GenerateKey(rand.Reader)
+		a, _ := NewAdminService[any](pk, testCerts.CertPool)
+		_ = a.SetPolicy(func(_ *x509.Certificate) (*Context[any], error) {
+			return nil, errors.New("policy rejected cert")
+		})
+
+		freshCert, _ := GenerateAdditionalClientCert(t, testCerts, "policy-error-client")
+		_, err := a.GenerateTrusted(context.Background(), freshCert)
+		if err == nil {
+			t.Fatal("expected policy error")
+		}
+		if !strings.Contains(err.Error(), "policy rejected cert") {
+			t.Fatalf("expected policy error message, got: %v", err)
+		}
+	})
+
+	t.Run("fills defaults when policy omits cert info", func(t *testing.T) {
+		resetAdminForTesting()
+
+		_, pk, _ := ed25519.GenerateKey(rand.Reader)
+		a, _ := NewAdminService[any](pk, testCerts.CertPool)
+
+		// Policy that returns minimal context — no CertificateInfo, no fingerprint, no IssuedAt
+		_ = a.SetPolicy(func(_ *x509.Certificate) (*Context[any], error) {
+			return &Context[any]{
+				ExpiresAt:   time.Now().Add(time.Hour),
+				Permissions: []string{"minimal"},
+			}, nil
+		})
+
+		freshCert, _ := GenerateAdditionalClientCert(t, testCerts, "minimal-policy-client")
+		token, err := a.GenerateTrusted(context.Background(), freshCert)
+		if err != nil {
+			t.Fatalf("GenerateTrusted failed: %v", err)
+		}
+		if token == "" {
+			t.Fatal("expected non-empty token")
+		}
+
+		// Verify defaults were filled in
+		fp := getFingerprint(freshCert)
+		sctx, exists := a.GetContext(context.Background(), fp)
+		if !exists {
+			t.Fatal("expected context to be cached")
+		}
+		if sctx.CertificateInfo.CommonName == "" {
+			t.Error("expected CertificateInfo to be filled in")
+		}
+		if sctx.CertificateFingerprint == "" {
+			t.Error("expected CertificateFingerprint to be filled in")
+		}
+		if sctx.IssuedAt.IsZero() {
+			t.Error("expected IssuedAt to be filled in")
 		}
 	})
 }
