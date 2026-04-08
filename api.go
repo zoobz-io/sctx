@@ -13,6 +13,11 @@ type Admin[M any] interface {
 	// Generate creates a token for the given certificate and assertion
 	Generate(ctx context.Context, cert *x509.Certificate, assertion SignedAssertion) (SignedToken, error)
 
+	// GenerateTrusted creates a token for an mTLS-verified certificate without requiring
+	// a signed assertion. Use this when the TLS layer has already verified the client's
+	// private key possession (e.g., server-side injection for cert-only clients).
+	GenerateTrusted(ctx context.Context, cert *x509.Certificate) (SignedToken, error)
+
 	// CreateGuard creates a guard for validating tokens with required permissions
 	CreateGuard(ctx context.Context, token SignedToken, requiredPermissions ...string) (Guard, error)
 

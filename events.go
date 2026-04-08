@@ -12,6 +12,11 @@ var (
 	// Fields: FingerprintKey.
 	TokenVerified = capitan.NewSignal("sctx.token.verified", "Security token successfully verified")
 
+	// TrustedTokenGenerated is emitted when a token is created from an mTLS-verified certificate
+	// without assertion validation.
+	// Fields: FingerprintKey, CommonNameKey, PermissionsKey.
+	TrustedTokenGenerated = capitan.NewSignal("sctx.token.trusted_generated", "Security token created from mTLS-verified certificate")
+
 	// TokenRejected is emitted when token verification fails.
 	// Fields: FingerprintKey, ErrorKey.
 	TokenRejected = capitan.NewSignal("sctx.token.rejected", "Security token verification failed")
