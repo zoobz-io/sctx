@@ -18,6 +18,13 @@ func TokenFromContext(ctx context.Context) (SignedToken, bool) {
 	return token, ok
 }
 
+// InjectToken embeds a SignedToken into a context.Context.
+// Use this for server-side injection when you have a token from GenerateTrusted
+// but don't need a full Principal.
+func InjectToken(ctx context.Context, token SignedToken) context.Context {
+	return context.WithValue(ctx, contextKey{}, token)
+}
+
 // NewPrincipal creates a principal by authenticating a certificate against the admin.
 // It creates an assertion, generates a token, and returns a ready-to-use principal.
 func NewPrincipal[M any](ctx context.Context, admin Admin[M], privateKey crypto.PrivateKey, cert *x509.Certificate) (Principal, error) {

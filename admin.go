@@ -243,6 +243,75 @@ func (a *adminService[M]) Generate(ctx context.Context, cert *x509.Certificate, 
 	return token, nil
 }
 
+// GenerateTrusted creates a token for an mTLS-verified certificate without assertion validation.
+// The TLS handshake already proved private key possession, so we skip the assertion step.
+func (a *adminService[M]) GenerateTrusted(ctx context.Context, cert *x509.Certificate) (SignedToken, error) {
+	if cert == nil {
+		return "", errors.New("certificate is required")
+	}
+
+	// Verify certificate against trusted CAs
+	opts := x509.VerifyOptions{
+		Roots:         a.certPool,
+		Intermediates: x509.NewCertPool(),
+		CurrentTime:   time.Now(),
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	}
+	if _, verifyErr := cert.Verify(opts); verifyErr != nil {
+		capitan.Warn(ctx, CertificateRejected,
+			CommonNameKey.Field(cert.Subject.CommonName),
+			ErrorKey.Field(verifyErr.Error()),
+		)
+		return "", fmt.Errorf("certificate verification failed: %w", verifyErr)
+	}
+
+	// Check if already cached
+	fingerprint := getFingerprint(cert)
+	if cached, exists := a.cache.Get(ctx, fingerprint); exists {
+		return a.createToken(cached)
+	}
+
+	// Apply policy to transform certificate into context
+	a.policyMu.RLock()
+	policy := a.policy
+	a.policyMu.RUnlock()
+
+	if policy == nil {
+		return "", ErrNoPolicy
+	}
+
+	secCtx, err := policy(cert)
+	if err != nil {
+		return "", fmt.Errorf("policy failed: %w", err)
+	}
+
+	// Set certificate info and fingerprint (in case policy didn't)
+	if secCtx.CertificateInfo.CommonName == "" {
+		secCtx.CertificateInfo = extractCertificateInfo(cert)
+	}
+	if secCtx.CertificateFingerprint == "" {
+		secCtx.CertificateFingerprint = fingerprint
+	}
+	if secCtx.IssuedAt.IsZero() {
+		secCtx.IssuedAt = time.Now()
+	}
+
+	// Cache and return token
+	a.cache.Store(ctx, fingerprint, secCtx)
+	token, err := a.createToken(secCtx)
+	if err != nil {
+		return "", err
+	}
+
+	capitan.Info(ctx, TrustedTokenGenerated,
+		FingerprintKey.Field(fingerprint),
+		CommonNameKey.Field(cert.Subject.CommonName),
+		PermissionsKey.Field(strings.Join(secCtx.Permissions, ",")),
+	)
+
+	return token, nil
+}
+
 // createToken creates a signed token from a context.
 func (a *adminService[M]) createToken(ctx *Context[M]) (SignedToken, error) {
 	// Token expiry should not exceed certificate expiry
